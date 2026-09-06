@@ -1,0 +1,187 @@
+/* Audio graph: master chain, buses, reverb, layer gains, noise buffers.
+ * Works with both AudioContext (live) and OfflineAudioContext (export). */
+(function (root) {
+  const AN = root.AN = root.AN || {};
+
+  class Graph {
+    constructor(ctx, opts = {}) {
+      this.ctx = ctx;
+      this.sources = new Set();
+      const c = ctx;
+
+      this.master = c.createGain();
+      this.master.gain.value = opts.volume == null ? 0.8 : opts.volume;
+      this.comp = c.createDynamicsCompressor();
+      this.comp.threshold.value = -14; this.comp.knee.value = 18; this.comp.ratio.value = 5;
+      this.comp.attack.value = 0.01; this.comp.release.value = 0.3;
+      this.master.connect(this.comp);
+      this.comp.connect(c.destination);
+      if (typeof c.createMediaStreamDestination === 'function') {
+        this.recordDest = c.createMediaStreamDestination();
+        this.comp.connect(this.recordDest);
+      }
+
+      // reverb (generated impulse response)
+      this.reverb = c.createConvolver();
+      this.reverb.buffer = this.makeImpulse(3.4, 2.6);
+      this.reverbGain = c.createGain();
+      this.reverbGain.gain.value = 0.9;
+      this.reverb.connect(this.reverbGain);
+      this.reverbGain.connect(this.master);
+
+      // music chain: bus -> lo-fi lowpass -> soft saturation -> master
+      this.musicBus = c.createGain();
+      this.lofiFilter = c.createBiquadFilter();
+      this.lofiFilter.type = 'lowpass'; this.lofiFilter.Q.value = 0.4;
+      this.openCutoff = Math.min(18000, c.sampleRate * 0.45);
+      this.lofiFilter.frequency.value = this.openCutoff;
+      this.shaper = c.createWaveShaper();
+      this.shaper.curve = Graph.curve(0);
+      this.shaper.oversample = '2x';
+      this.musicBus.connect(this.lofiFilter);
+      this.lofiFilter.connect(this.shaper);
+      this.shaper.connect(this.master);
+
+      this.ambienceBus = c.createGain();
+      this.ambienceBus.connect(this.master);
+
+      this.layers = {};
+      this._noise = {};
+      this._offset = 0;
+    }
+
+    /** input(section multiplier) -> user(mixer level) -> bus; user -> send -> reverb */
+    layer(name, bus = 'music', sendLevel = 0.3) {
+      if (this.layers[name]) return this.layers[name];
+      const c = this.ctx;
+      const input = c.createGain(); input.gain.value = 1;
+      const user = c.createGain(); user.gain.value = 1;
+      const send = c.createGain(); send.gain.value = sendLevel;
+      input.connect(user);
+      user.connect(bus === 'music' ? this.musicBus : this.ambienceBus);
+      user.connect(send);
+      send.connect(this.reverb);
+      return (this.layers[name] = { name, input, user, send });
+    }
+
+    setUserLevel(name, level, t) {
+      const l = this.layers[name];
+      if (!l) return;
+      l.user.gain.cancelScheduledValues(t);
+      l.user.gain.setTargetAtTime(Math.max(0, level), t, 0.08);
+    }
+
+    setSectionLevel(name, mult, t, tc = 2.5) {
+      const l = this.layers[name];
+      if (!l) return;
+      l.input.gain.setTargetAtTime(Math.max(0, mult), t, tc);
+    }
+
+    setVolume(v, t) {
+      this.master.gain.cancelScheduledValues(t);
+      this.master.gain.setTargetAtTime(Math.max(0, v), t, 0.05);
+    }
+
+    /** Lo-fi character: closed-down lowpass + gentle saturation. */
+    setCharacter(lofi, brightness, t) {
+      const f = lofi ? Math.min(this.openCutoff, 2200 + brightness * 4500) : this.openCutoff;
+      this.lofiFilter.frequency.setTargetAtTime(f, t, 1.5);
+      const drive = lofi ? 0.35 : 0;
+      if (this._drive !== drive) { this.shaper.curve = Graph.curve(drive); this._drive = drive; }
+    }
+
+    static curve(drive) {
+      const n = 1024, arr = new Float32Array(n);
+      const k = drive * 3;
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        arr[i] = k > 0 ? Math.tanh(x * (1 + k)) / Math.tanh(1 + k) : x;
+      }
+      return arr;
+    }
+
+    makeImpulse(seconds, decay) {
+      const c = this.ctx, sr = c.sampleRate, len = Math.floor(sr * seconds);
+      const buf = c.createBuffer(2, len, sr);
+      const rng = AN.rng('impulse');
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        let y = 0;
+        for (let i = 0; i < len; i++) {
+          const x = (rng.next() * 2 - 1) * Math.pow(1 - i / len, decay);
+          y += 0.25 * (x - y); // one-pole lowpass -> darker tail
+          d[i] = y * 2.2;
+        }
+      }
+      return buf;
+    }
+
+    /** Looping noise buffer: 'white' | 'pink' | 'brown' */
+    noise(type) {
+      if (this._noise[type]) return this._noise[type];
+      const c = this.ctx, sr = c.sampleRate, len = sr * 4;
+      const buf = c.createBuffer(2, len, sr);
+      const rng = AN.rng('noise', type);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        if (type === 'white') {
+          for (let i = 0; i < len; i++) d[i] = rng.next() * 2 - 1;
+        } else if (type === 'pink') {
+          let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+          for (let i = 0; i < len; i++) {
+            const w = rng.next() * 2 - 1;
+            b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+            b2 = 0.96900 * b2 + w * 0.1538520; b3 = 0.86650 * b3 + w * 0.3104856;
+            b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
+            d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+            b6 = w * 0.115926;
+          }
+        } else { // brown
+          let last = 0;
+          for (let i = 0; i < len; i++) {
+            const w = rng.next() * 2 - 1;
+            last = (last + 0.02 * w) / 1.02;
+            d[i] = last * 3.5;
+          }
+        }
+      }
+      return (this._noise[type] = buf);
+    }
+
+    noiseSource(type, t, loop = true) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise(type);
+      src.loop = loop;
+      this._offset = (this._offset + 0.731) % 3.9;
+      src.start(t, this._offset);
+      return src;
+    }
+
+    panner(pan) {
+      const c = this.ctx;
+      if (typeof c.createStereoPanner === 'function') {
+        const p = c.createStereoPanner();
+        p.pan.value = Math.max(-1, Math.min(1, pan || 0));
+        return p;
+      }
+      return c.createGain();
+    }
+
+    /** Register a source so pause/stop can kill it; disconnect nodes when done. */
+    track(src, ...cleanup) {
+      this.sources.add(src);
+      src.onended = () => {
+        this.sources.delete(src);
+        for (const n of cleanup) { try { n.disconnect(); } catch (e) { /* already gone */ } }
+      };
+      return src;
+    }
+
+    killAll(t) {
+      for (const s of this.sources) { try { s.stop(t); } catch (e) { /* not started */ } }
+      this.sources.clear();
+    }
+  }
+
+  AN.Graph = Graph;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

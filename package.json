@@ -1,0 +1,12 @@
+{
+  "name": "ambient-noiser",
+  "version": "1.0.0",
+  "description": "Hour-long looping generative ambient / lo-fi soundscapes with mood changes, built on the Web Audio API.",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test test/*.test.js",
+    "test:browser": "node test/browser.smoke.mjs"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ambient Noiser — generative looping soundscapes</title>
+  <meta name="description" content="Hour-long looping ambient and lo-fi soundscapes with mood changes every few minutes, generated live in your browser. Save your favourites.">
+  <meta name="theme-color" content="#0e1116">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2313202e'/%3E%3Cpath d='M6 18c3-6 5-6 8 0s5 6 8 0 3-6 4-4' fill='none' stroke='%237cc4ff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1><span class="logo" aria-hidden="true"></span>Ambient Noiser</h1>
+      <p>Hour-long looping soundscapes that shift mood every few minutes — ambient, lo-fi hip hop, focus music, rain and more. Generated live in your browser, nothing is uploaded.</p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card player" aria-label="Player">
+      <div class="now">
+        <button id="play" class="play" type="button" aria-label="Play">▶</button>
+        <div class="now-text">
+          <div class="mood"><span id="moodName">—</span> <span class="badge" id="moodTag"></span></div>
+          <div class="meta" id="nowMeta"></div>
+          <div class="next" id="nextMood"></div>
+        </div>
+        <div class="clock"><span id="elapsed">0:00</span><span class="sep">/</span><span id="total">60:00</span></div>
+      </div>
+      <div class="timeline" id="timeline" title="Click to jump">
+        <div class="segments" id="segments"></div>
+        <div class="playhead" id="playhead"></div>
+      </div>
+      <details class="movements">
+        <summary><span id="planSummary"></span><span class="chev">movements</span></summary>
+        <ol id="sectionList"></ol>
+      </details>
+    </section>
+
+    <section class="card controls" aria-label="Style and settings">
+      <h2>Style</h2>
+      <div class="styles" id="styles"></div>
+      <div class="grid2">
+        <label class="field seed-field">
+          <span>Seed <small>— same seed, same hour of music</small></span>
+          <span class="inline">
+            <input id="seed" type="text" maxlength="64" spellcheck="false" autocomplete="off">
+            <button id="dice" type="button" class="ghost" title="New random seed">🎲 New</button>
+          </span>
+        </label>
+        <label class="field"><span>Loop length</span><select id="duration"></select></label>
+        <label class="field"><span>Mood changes every</span><select id="sectionMin"></select></label>
+        <label class="field"><span>Volume</span><input id="volume" type="range" min="0" max="100" value="80"></label>
+        <label class="field"><span>Sleep timer <small id="sleepStatus"></small></span><select id="sleep"></select></label>
+      </div>
+    </section>
+
+    <section class="card mixer" aria-label="Mixer">
+      <h2>Music</h2>
+      <div class="faders" id="musicMixer"></div>
+      <h2>Environment</h2>
+      <div class="faders" id="ambienceMixer"></div>
+      <p class="hint">Environment sounds ride along with the mood: rain gets heavier and thunder rolls in during restless movements, birds come out when the music lifts.</p>
+    </section>
+
+    <section class="card library" aria-label="Your mixes">
+      <h2>Your mixes</h2>
+      <div class="inline">
+        <input id="mixName" type="text" maxlength="60" placeholder="Name this mix (optional)">
+        <button id="save" type="button" class="primary">Save</button>
+        <button id="share" type="button" class="ghost" title="Copy a link that recreates this exact mix">Copy link</button>
+      </div>
+      <p class="hint" id="libraryEmpty">Nothing saved yet. Find a seed and mix you like, save it, and it’s here next time — mixes live in this browser only.</p>
+      <ul class="mixes" id="mixList"></ul>
+      <div class="inline wrap">
+        <button id="export" type="button" class="ghost sm">Export library</button>
+        <button id="import" type="button" class="ghost sm">Import library</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+      </div>
+
+      <h2>Save as audio</h2>
+      <div class="inline wrap">
+        <button id="record" type="button" class="ghost">● Record</button>
+        <span class="status" id="recStatus"></span>
+      </div>
+      <p class="hint">Record captures what you hear, in real time, and downloads a compressed audio file when you stop — leave it running for the full hour if you like.</p>
+      <div class="inline wrap">
+        <select id="wavMinutes"></select>
+        <button id="wav" type="button" class="ghost">Export WAV</button>
+        <span class="status" id="wavStatus"></span>
+      </div>
+      <p class="hint">Export WAV renders the start of the loop offline, faster than real time, as an uncompressed file (about 10 MB per minute).</p>
+    </section>
+  </main>
+
+  <footer>
+    <span><kbd>Space</kbd> play / pause</span>
+    <span><kbd>←</kbd> <kbd>→</kbd> skip 30 s</span>
+    <span>Everything runs locally with the Web Audio API. Loops are seamless: the last movement settles back into the first.</span>
+  </footer>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="js/prng.js"></script>
+  <script src="js/theory.js"></script>
+  <script src="js/composer.js"></script>
+  <script src="js/audio/graph.js"></script>
+  <script src="js/audio/synths.js"></script>
+  <script src="js/audio/drums.js"></script>
+  <script src="js/audio/ambience.js"></script>
+  <script src="js/audio/engine.js"></script>
+  <script src="js/audio/recorder.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
