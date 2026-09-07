@@ -14,14 +14,15 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 
 **Playing it**
 
-- **Environment mixer** — twelve textures that ride along with the mood: heavier rain and thunder in restless movements, birdsong when the music lifts, chimes tuned to the movement's own key.
+- **Environment mixer** — twelve textures that ride along with the mood: heavier rain and thunder in restless movements, birdsong when the music lifts, chimes tuned to the movement's own key. Nine one-click presets (rainy window, thunderstorm, campfire night, café, seaside, forest creek, night train, chimes, silence).
 - **Mood steering** — jump to a calmer or brighter movement, skip ahead, or lock one movement on repeat.
 - **Focus timer** — 25+5, 50+10 or 90+20. Breaks step the mix back instead of stopping it, with a chime at each change.
 - **Time of day** — fixed or following the clock, colouring moods, brightness, tempo and environment.
 - **Edit any movement** — override its mood, key, mode and length. A movement given a length keeps it and the rest share out what is left, so the loop stays exactly as long as you asked for.
 - **Queue with crossfade** — line up saved mixes and they fade from one into the next, whole loop by whole loop or on a timer. Good for a working day.
 - **Quiet mode, visualiser, themes** — hide everything but the player, watch slow drifting bands coloured by the current movement, and pick system, dark, light or OLED black.
-- **Sleep timer**, media keys and lock-screen controls, and keyboard shortcuts.
+- **Sleep timer** that fades out rather than cutting, media keys and lock-screen controls, and keyboard shortcuts. Timers keep running while the tab is in the background, which is the whole point.
+- **Accessible and considerate** — the timeline is a keyboard slider, movement changes are announced, focus is visible, and `prefers-reduced-motion` is honoured. Under heavy load the incidental one-shots thin out so musical notes never drop.
 
 **Keeping it**
 
@@ -35,6 +36,7 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 | `←` `→` | skip 30 seconds |
 | `N` `P` | next / previous movement |
 | `Q` `Esc` | quiet mode |
+| `Home` `End` `PgUp` `PgDn` | on the focused timeline: start, end, back or forward five minutes |
 
 ## Run it
 
@@ -86,6 +88,7 @@ Every random decision is drawn from a generator keyed on `seed + movement + bar 
 | File | Role |
 | --- | --- |
 | `js/prng.js` | seeded random numbers |
+| `js/timer.js` | worker-driven ticker that survives a background tab |
 | `js/theory.js` | modes, diatonic chords, voicings |
 | `js/composer.js` | styles, moods, dayparts, plan generation |
 | `js/audio/graph.js` | shared output, buses, reverbs, tape path, noise beds |

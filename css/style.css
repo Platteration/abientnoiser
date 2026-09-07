@@ -265,3 +265,7 @@ body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-i
   .movements summary { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
   .movements .chev { align-self: flex-end; }
 }
+
+/* environment presets */
+.presets { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.7rem; }
+.presets button { font-size: 0.78rem; padding: 0.25rem 0.55rem; }

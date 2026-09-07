@@ -21,6 +21,17 @@
   const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
   const CROSSFADES = [4, 8, 15, 30];
   const SLEEP_FADE = 20; // seconds of fade before the sleep timer stops playback
+  const PRESETS = [
+    ['Rainy window', { rain: 0.55, thunder: 0.12, wind: 0.1 }],
+    ['Thunderstorm', { rain: 0.8, thunder: 0.6, wind: 0.35 }],
+    ['Campfire night', { fire: 0.5, crickets: 0.35, wind: 0.1 }],
+    ['Café', { cafe: 0.45, vinyl: 0.2 }],
+    ['Seaside', { waves: 0.5, wind: 0.25, birds: 0.15 }],
+    ['Forest creek', { creek: 0.45, birds: 0.3, wind: 0.15 }],
+    ['Night train', { train: 0.45, rain: 0.2 }],
+    ['Chimes on the porch', { chimes: 0.5, wind: 0.2, crickets: 0.2 }],
+    ['Silence', {}],
+  ];
 
   // ---------- init ----------
   function init() {
@@ -43,6 +54,7 @@
     buildSelect($('crossfade'), CROSSFADES, (v) => `${v} s`, AN.storage.prefs().crossfade || 8);
     state.queue = (AN.storage.prefs().queue || []).filter((id) => AN.storage.get(id));
     state.queueIndex = 0;
+    buildPresets();
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
     $('seed').value = state.settings.seed;
@@ -90,6 +102,28 @@
       b.style.setProperty('--accent', ACCENTS[id]);
       b.innerHTML = `<span class="icon">${st.icon}</span><span class="name">${st.name}</span><span class="desc">${st.desc}</span>`;
       b.addEventListener('click', () => setStyle(id));
+      wrap.appendChild(b);
+    }
+  }
+
+  /** One-click environment combinations. Every texture not named is turned off. */
+  function buildPresets() {
+    const wrap = $('presets');
+    wrap.innerHTML = '';
+    for (const [name, levels] of PRESETS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost sm';
+      b.textContent = name;
+      b.addEventListener('click', () => {
+        const next = {};
+        for (const l of AN.AMBIENCE_LAYERS) next[l.id] = levels[l.id] || 0;
+        Object.assign(state.settings.levels, next);
+        refreshMixer();
+        if (state.engine) state.engine.applyLevels(next, state.engine.ctx.currentTime);
+        autosave();
+        toast(name === 'Silence' ? 'Environment off' : `Environment: ${name.toLowerCase()}`);
+      });
       wrap.appendChild(b);
     }
   }
@@ -418,6 +452,8 @@
     state.editing = null;
     const next = newEngine();
     state.engine = next;
+    $('lock').classList.remove('active');
+    $('lock').textContent = '🔓 Lock';
     next.transport.play({ fade });
     old.transport.dispose(fade);
     state.crossfadeUntil = performance.now() + fade * 1000;

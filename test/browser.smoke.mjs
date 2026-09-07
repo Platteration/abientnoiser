@@ -474,6 +474,24 @@ try {
   check(layout.scrollW <= layout.clientW && layout.tooNarrow.length === 0,
     `at ${layout.clientW}px nothing overflows sideways and every field stays usable${layout.tooNarrow.length ? ': ' + layout.tooNarrow.join(', ') : ''}`);
 
+  // environment presets set exactly the named textures and clear the rest
+  const preset = await page.evaluate(async () => {
+    const buttons = [...document.querySelectorAll('#presets button')];
+    const byName = (n) => buttons.find((b) => b.textContent === n);
+    byName('Thunderstorm').click();
+    await new Promise((r) => setTimeout(r, 150));
+    const storm = {};
+    for (const l of AN.AMBIENCE_LAYERS) storm[l.id] = AmbientNoiser.state.settings.levels[l.id];
+    const faderMatches = [...document.querySelectorAll('#ambienceMixer input')]
+      .every((i) => Math.round(storm[i.dataset.layer] * 100) === Number(i.value));
+    byName('Silence').click();
+    await new Promise((r) => setTimeout(r, 150));
+    const silent = AN.AMBIENCE_LAYERS.every((l) => AmbientNoiser.state.settings.levels[l.id] === 0);
+    return { count: buttons.length, rain: storm.rain, thunder: storm.thunder, cafe: storm.cafe, faderMatches, silent };
+  });
+  check(preset.count >= 8 && preset.rain > 0 && preset.thunder > 0 && preset.cafe === 0 && preset.faderMatches && preset.silent,
+    `${preset.count} environment presets set the faders and clear what they do not name`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
