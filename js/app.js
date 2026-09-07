@@ -179,10 +179,10 @@
         artist: `${plan.styleName} · ${section.keyName} ${section.mode}`,
         album: `Ambient Noiser · seed ${plan.seed}`,
       });
-    } catch (e) { /* MediaMetadata unavailable */ }
+    } catch { /* MediaMetadata unavailable */ }
     if (!state.mediaBound) {
       state.mediaBound = true;
-      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) { /* unsupported action */ } };
+      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ } };
       set('play', () => { if (!state.engine || !state.engine.transport.playing) togglePlay(); });
       set('pause', () => { if (state.engine && state.engine.transport.playing) togglePlay(); });
       set('seekbackward', (d) => nudge(-(d && d.seekOffset ? d.seekOffset : 30)));
@@ -198,7 +198,7 @@
           position: Math.min(plan.duration, Math.max(0, state.engine ? state.engine.transport.now() : 0)),
           playbackRate: 1,
         });
-      } catch (e) { /* position state rejected */ }
+      } catch { /* position state rejected */ }
     }
     navigator.mediaSession.playbackState = state.engine && state.engine.transport.playing ? 'playing' : 'paused';
   }
@@ -339,7 +339,7 @@
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) { toast('Web Audio is not supported in this browser'); return null; }
     let ctx;
-    try { ctx = new Ctx({ latencyHint: 'playback' }); } catch (e) { ctx = new Ctx(); }
+    try { ctx = new Ctx({ latencyHint: 'playback' }); } catch { ctx = new Ctx(); }
     state.ctx = ctx;
     state.output = new AN.Output(ctx);
     state.engine = newEngine();
@@ -658,7 +658,7 @@
   async function copyShare(settings) {
     const url = `${location.origin}${location.pathname}?mix=${AN.storage.encodeShare(settings)}`;
     try { await navigator.clipboard.writeText(url); toast('Link copied'); }
-    catch (e) { prompt('Copy this link', url); }
+    catch { prompt('Copy this link', url); }
   }
 
   // ---------- recording / export ----------
@@ -738,7 +738,6 @@
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });
-    $('wavMinutes').addEventListener('change', () => { /* length chosen; nothing to do until export */ });
     $('sectionMin').addEventListener('change', () => { state.settings.sectionMin = Number($('sectionMin').value); recompose(); });
     $('volume').addEventListener('input', () => {
       state.settings.volume = Number($('volume').value) / 100;

@@ -6,10 +6,10 @@
   const PREFS = 'ambientnoiser.prefs.v1';
 
   function read(key, fallback) {
-    try { const raw = root.localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; }
+    try { const raw = root.localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
   }
   function write(key, value) {
-    try { root.localStorage.setItem(key, JSON.stringify(value)); return true; } catch (e) { return false; }
+    try { root.localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
   }
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -97,7 +97,7 @@
         const b64 = code.replace(/-/g, '+').replace(/_/g, '/');
         const json = decodeURIComponent(escape(root.atob(b64)));
         return cleanSettings(JSON.parse(json));
-      } catch (e) { return null; }
+      } catch { return null; }
     },
     cleanSettings,
   };

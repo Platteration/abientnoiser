@@ -82,7 +82,7 @@
       this.flutter = c.createOscillator(); this.flutter.frequency.value = 6.3;
       this.flutterGain = c.createGain(); this.flutterGain.gain.value = 0;
       this.flutter.connect(this.flutterGain); this.flutterGain.connect(this.tape.delayTime);
-      try { this.wow.start(0); this.flutter.start(0); } catch (e) { /* already started */ }
+      try { this.wow.start(0); this.flutter.start(0); } catch { /* already started */ }
 
       this.lofiFilter = c.createBiquadFilter();
       this.lofiFilter.type = 'lowpass'; this.lofiFilter.Q.value = 0.4;
@@ -247,13 +247,13 @@
       this.sources.add(src);
       src.onended = () => {
         this.sources.delete(src);
-        for (const n of cleanup) { try { n.disconnect(); } catch (e) { /* already gone */ } }
+        for (const n of cleanup) { try { n.disconnect(); } catch { /* already gone */ } }
       };
       return src;
     }
 
     killAll(t) {
-      for (const s of this.sources) { try { s.stop(t); } catch (e) { /* not started */ } }
+      for (const s of this.sources) { try { s.stop(t); } catch { /* not started */ } }
       this.sources.clear();
     }
   }

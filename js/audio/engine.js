@@ -29,8 +29,6 @@
       this.applyLevels(this.levels, 0, true);
     }
 
-    get isOffline() { return typeof this.ctx.startRendering === 'function'; }
-
     /** Effective level for a layer: mixer setting times any temporary duck. */
     levelOf(id) {
       const v = this.levels[id] == null ? 0 : this.levels[id];
@@ -407,7 +405,7 @@
         const now = ctx.currentTime;
         this.engine.graph.killAll(now);
         this.engine.stopTextures(now);
-        try { this.engine.graph.comp.disconnect(); } catch (e) { /* already gone */ }
+        try { this.engine.graph.comp.disconnect(); } catch { /* already gone */ }
       }, Math.max(100, fade * 1000 + 400));
     }
 
@@ -490,7 +488,7 @@
         this.worker.onmessage = tick;
         this.worker.postMessage(120);
         URL.revokeObjectURL(url);
-      } catch (e) {
+      } catch {
         this.timer = setInterval(tick, 120);
       }
     }

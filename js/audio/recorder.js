@@ -122,10 +122,6 @@
     return ab;
   };
 
-  AN.encodeWav = function (buffer) {
-    return new Blob([AN.wavHeader(buffer.length, buffer.numberOfChannels, buffer.sampleRate), AN.pcm16(buffer)], { type: 'audio/wav' });
-  };
-
   AN.download = function (blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

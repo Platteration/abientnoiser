@@ -26,9 +26,9 @@
       if (!this.running) return;
       this.running = false;
       for (const n of this.nodes) {
-        try { if (typeof n.stop === 'function') n.stop(t + 0.05); } catch (e) { /* ignore */ }
+        try { if (typeof n.stop === 'function') n.stop(t + 0.05); } catch { /* ignore */ }
         // disconnect a moment later so tails through gain ramps aren't cut mid-sample
-        if (typeof n.stop !== 'function') { try { n.disconnect(); } catch (e) { /* ignore */ } }
+        if (typeof n.stop !== 'function') { try { n.disconnect(); } catch { /* ignore */ } }
       }
       this.nodes = [];
     }
