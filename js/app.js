@@ -764,6 +764,14 @@
   }
 
   // ---------- misc ----------
+  function resumeIfInterrupted() {
+    const engine = state.engine;
+    if (document.hidden || !engine || !engine.transport.playing) return;
+    if (engine.ctx.state === 'suspended' && engine.ctx.resume) {
+      engine.ctx.resume().then(() => engine.transport.schedule()).catch(() => { /* needs a fresh gesture */ });
+    }
+  }
+
   let toastTimer = null;
   function toast(msg) {
     const el = $('toast');
@@ -825,9 +833,10 @@
     });
     $('save').addEventListener('click', () => {
       const name = $('mixName').value.trim() || defaultMixName();
-      AN.storage.save(name, state.settings);
-      $('mixName').value = '';
+      const saved = AN.storage.save(name, state.settings);
       renderLibrary();
+      if (!saved) return toast('Could not save — this browser is blocking local storage');
+      $('mixName').value = '';
       toast(`Saved “${name}”`);
     });
     $('mixName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
@@ -871,6 +880,9 @@
       else if (e.key === 'p' || e.key === 'P') jumpMovement(-1);
     });
     window.addEventListener('beforeunload', autosave);
+    // mobile suspends the audio context on interruptions; pick playback back up
+    document.addEventListener('visibilitychange', resumeIfInterrupted);
+    window.addEventListener('focus', resumeIfInterrupted);
   }
 
   window.AmbientNoiser = {

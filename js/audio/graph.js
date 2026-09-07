@@ -101,6 +101,11 @@
 
       this.layers = {};
       this._offset = 0;
+      // Every layer at full can ask for ~200 simultaneous sources, which is more
+      // than a modest phone can mix cleanly. Above the soft limit the incidental
+      // one-shots (drips, crackles, clicks) are skipped; musical notes never are.
+      this.softLimit = opts.softLimit || 130;
+      this.dropped = 0;
     }
 
     /** input(section multiplier) -> user(mixer level) -> bus; user -> send -> reverb.
@@ -116,6 +121,13 @@
       user.connect(send);
       send.connect(reverb === 'room' ? this.roomReverb : this.reverb);
       return (this.layers[name] = { name, input, user, send });
+    }
+
+    /** Is there room for another incidental one-shot? */
+    hasRoom() {
+      if (this.sources.size < this.softLimit) return true;
+      this.dropped++;
+      return false;
     }
 
     /** Duck the pumped layers under a kick. */

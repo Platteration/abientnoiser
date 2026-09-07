@@ -54,12 +54,12 @@
 
   const storage = {
     list() { const l = read(KEY, []); return Array.isArray(l) ? l : []; },
+    /** @returns the saved mix, or null if this browser refused to store it. */
     save(name, settings) {
       const mixes = this.list();
       const mix = { id: uid(), name: String(name || 'Untitled').slice(0, 60), createdAt: Date.now(), settings: cleanSettings(settings) };
       mixes.unshift(mix);
-      write(KEY, mixes);
-      return mix;
+      return write(KEY, mixes) ? mix : null;
     },
     rename(id, name) {
       const mixes = this.list().map((m) => (m.id === id ? Object.assign({}, m, { name: String(name).slice(0, 60) }) : m));
@@ -68,6 +68,7 @@
     remove(id) { write(KEY, this.list().filter((m) => m.id !== id)); },
     get(id) { return this.list().find((m) => m.id === id) || null; },
     exportAll() { return JSON.stringify({ app: 'ambientnoiser', version: 1, mixes: this.list() }, null, 2); },
+    /** @returns true if the whole library was written. */
     importJSON(text) {
       const data = JSON.parse(text);
       const incoming = Array.isArray(data) ? data : Array.isArray(data.mixes) ? data.mixes : null;

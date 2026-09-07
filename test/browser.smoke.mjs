@@ -427,6 +427,53 @@ try {
   check(slider.nearEnd > 60 && slider.backToStart < 5, `timeline keys seek (End -> ${slider.nearEnd.toFixed(0)}s, Home -> ${slider.backToStart.toFixed(1)}s)`);
   check(slider.live === 'polite', 'movement changes are announced to screen readers');
 
+  // under heavy load the incidental one-shots thin out; musical notes never do
+  const load = await page.evaluate(async () => {
+    const measure = async (full) => {
+      const s = AN.defaultSettings('lofi');
+      s.seed = 'load';
+      for (const l of AN.MUSIC_LAYERS.concat(AN.AMBIENCE_LAYERS)) s.levels[l.id] = full ? 1 : (s.levels[l.id] || 0);
+      AmbientNoiser.applySettings(s);
+      const e = AmbientNoiser.ensureEngine();
+      e.graph.dropped = 0;
+      e.transport.play();
+      let peak = 0;
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        peak = Math.max(peak, AmbientNoiser.state.engine.graph.sources.size);
+      }
+      const dropped = AmbientNoiser.state.engine.graph.dropped;
+      AmbientNoiser.state.engine.transport.pause();
+      await new Promise((r) => setTimeout(r, 500));
+      return { peak, dropped, limit: AmbientNoiser.state.engine.graph.softLimit };
+    };
+    const heavy = await measure(true);
+    const normal = await measure(false);
+    return { heavy, normal };
+  });
+  check(load.heavy.peak <= load.heavy.limit + 60 && load.heavy.dropped > 0,
+    `heavy load is capped near ${load.heavy.limit} sources (peak ${load.heavy.peak}, ${load.heavy.dropped} one-shots skipped)`);
+  check(load.normal.dropped === 0 && load.normal.peak < load.heavy.limit,
+    `a normal mix never hits the cap (peak ${load.normal.peak} sources, none skipped)`);
+
+  // narrow screens: nothing scrolls sideways and inputs stay usable
+  const phone = await browser.newPage({ viewport: { width: 360, height: 780 } });
+  await phone.goto(`http://localhost:${port}/`);
+  await phone.waitForSelector('.seg');
+  const layout = await phone.evaluate(() => {
+    const doc = document.documentElement;
+    const width = (el) => el.getBoundingClientRect().width;
+    // free-text fields need room to type in; selects only need to fit their own label
+    const tooNarrow = [
+      ...[...document.querySelectorAll('input[type="text"]')].filter((el) => width(el) < 140),
+      ...[...document.querySelectorAll('select')].filter((el) => width(el) < 50),
+    ].map((el) => `${el.id || el.className} (${Math.round(width(el))}px)`);
+    return { scrollW: doc.scrollWidth, clientW: doc.clientWidth, tooNarrow, faders: document.querySelectorAll('.fader').length };
+  });
+  await phone.close();
+  check(layout.scrollW <= layout.clientW && layout.tooNarrow.length === 0,
+    `at ${layout.clientW}px nothing overflows sideways and every field stays usable${layout.tooNarrow.length ? ': ' + layout.tooNarrow.join(', ') : ''}`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

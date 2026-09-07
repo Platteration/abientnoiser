@@ -42,6 +42,7 @@
     tick() {}
     burst(t, dur, type, filterType, freq, Q, gain, pan) {
       const c = this.ctx, g = this.graph;
+      if (!g.hasRoom()) return;
       t = Math.max(t, c.currentTime);
       const src = g.noiseSource(type, t, true);
       const f = c.createBiquadFilter(); f.type = filterType; f.frequency.value = freq; f.Q.value = Q;
@@ -219,6 +220,7 @@
     }
     phrase(t, rng) {
       const c = this.ctx, g = this.graph;
+      if (!g.hasRoom()) return;
       const o = c.createOscillator(); o.type = 'sine';
       const env = c.createGain(); env.gain.value = 0;
       const p = g.panner(rng.float(-0.9, 0.9));
@@ -393,6 +395,7 @@
       const n = rng.poisson(6 * this.mult * (p1 - p0));
       for (let i = 0; i < n; i++) {
         const c = this.ctx, g = this.graph;
+        if (!g.hasRoom()) return;
         const t = Math.max(toCtx(rng.float(p0, p1)), c.currentTime);
         const o = c.createOscillator(); o.type = 'sine';
         const env = c.createGain();
@@ -431,6 +434,7 @@
       const n = rng.int(2, 7);
       let cursor = t;
       for (let i = 0; i < n; i++) {
+        if (!this.graph.hasRoom()) return;
         AN.synths.bell(this.graph, this.layer, {
           midi: rng.pick(pool), t: cursor, vel: rng.float(0.12, 0.34) * (1 - i / (n * 2)), pan: rng.float(-0.8, 0.8),
         });

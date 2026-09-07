@@ -255,3 +255,13 @@ body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-i
   body, .seg, .style, .play, .visual { transition: none !important; }
   button.rec { animation: none; border-color: var(--danger); color: var(--danger); }
 }
+
+/* narrow screens: give inputs their own line rather than squeezing them away */
+@media (max-width: 560px) {
+  .savebar input[type="text"] { flex: 1 0 100%; }
+  .seed-field .inline { flex-wrap: wrap; }
+  .seed-field input[type="text"] { flex: 1 0 100%; }
+  .fader { grid-template-columns: 6.5rem 1fr 2rem; gap: 0.4rem; }
+  .movements summary { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+  .movements .chev { align-self: flex-end; }
+}
