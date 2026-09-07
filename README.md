@@ -1,70 +1,104 @@
 # Ambient Noiser
 
-Hour-long, seamlessly looping soundscapes for work, study and sleep — generated live in your browser with the Web Audio API. Every piece is built from simple synths (pads, electric piano, bells, plucks, bass, a dusty drum kit) and procedural environment sounds (rain, thunder, wind, ocean, fireplace, birds, crickets, vinyl crackle), and it changes **mood every few minutes**, like movements in a long song. Nothing is downloaded or uploaded; there are no samples and no server.
+Hour-long, seamlessly looping soundscapes for work, study and sleep — generated live in your browser with the Web Audio API. Every piece is built from simple synths (pads, electric piano, piano, bells, plucks, bass, and three drum kits) and procedural environment sounds (rain, thunder, wind, ocean, creek, fireplace, birds, crickets, wind chimes, café, night train, vinyl crackle), and it changes **mood every few minutes**, like movements in a long song. Nothing is downloaded or uploaded; there are no samples, no accounts and no server.
 
 ## Features
 
-- **Five styles**: Ambient Drift, Lo-fi Hip Hop, Deep Focus, Deep Space, Rainy Night.
-- **Mood movements**: a seeded composer lays out the hour as 8–20 movements (default: one every ~4 minutes). Each gets its own key, mode, chord progression, tempo, brightness and density — “Still Water” gives way to “Rising Sky”, tension resolves into release, and the arc settles back down so the loop seam is calm.
-- **Seamless looping**: 30 / 45 / 60 / 90 / 120-minute loops; the last movement flows back into the first.
-- **Environment mixer**: rain, thunder, wind, waves, fire, birds, crickets and vinyl ride along with the mood (heavier rain and thunder in restless movements, birdsong when the music lifts).
-- **Save your mixes**: name and save any seed + style + mixer setup to your browser library, copy a share link that recreates it exactly, export/import the library as JSON.
-- **Save as audio**: record what you hear in real time (compressed audio via `MediaRecorder`), or export the first 1–10 minutes of the loop as a WAV file, rendered offline faster than real time.
-- **Sleep timer**, keyboard shortcuts (`Space` play/pause, `←`/`→` skip 30 s), and everything remembers itself between visits.
+**The music**
+
+- **Eight styles**: Ambient Drift, Lo-fi Hip Hop, Deep Focus, Deep Space, Rainy Night, Piano Nocturne, Cassette Synthwave, Late Jazz Trio.
+- **Mood movements** — a seeded composer lays the hour out as 8 to 20 movements, one every ~4 minutes by default. Each gets its own key, mode, chord progression, tempo, brightness and density. "Still Water" gives way to "Rising Sky", tension resolves into release, and the arc settles down at both ends so the loop seam is calm.
+- **Three drum kits** — dusty lo-fi with swing and ghost notes, jazz brushes with a swung ride and cross-stick, and a straight electro kit with a layered clap. Walking bass for the jazz trio; sidechain pumping under the kick where the style calls for it; tape wow and flutter on the tape-flavoured styles.
+- **Seamless looping** — 30 to 120 minute loops, where the last movement flows back into the first.
+- **Same seed, same hour** — every random decision comes from a seeded generator, so a seed always reproduces the same piece, each loop is identical, and an export sounds exactly like playback.
+
+**Playing it**
+
+- **Environment mixer** — twelve textures that ride along with the mood: heavier rain and thunder in restless movements, birdsong when the music lifts, chimes tuned to the movement's own key.
+- **Mood steering** — jump to a calmer or brighter movement, skip ahead, or lock one movement on repeat.
+- **Focus timer** — 25+5, 50+10 or 90+20. Breaks step the mix back instead of stopping it, with a chime at each change.
+- **Time of day** — fixed or following the clock, colouring moods, brightness, tempo and environment.
+- **Edit any movement** — override its mood, key, mode and length. A movement given a length keeps it and the rest share out what is left, so the loop stays exactly as long as you asked for.
+- **Queue with crossfade** — line up saved mixes and they fade from one into the next, whole loop by whole loop or on a timer. Good for a working day.
+- **Quiet mode, visualiser, themes** — hide everything but the player, watch slow drifting bands coloured by the current movement, and pick system, dark, light or OLED black.
+- **Sleep timer**, media keys and lock-screen controls, and keyboard shortcuts.
+
+**Keeping it**
+
+- **Save mixes** to a browser library, copy a share link that recreates one exactly, export or import the library as JSON, and save a picture of a mix as a PNG card.
+- **Save as audio** — record what you hear in real time, or export the loop as a WAV rendered offline faster than real time. Long exports render in five-minute chunks with a progress bar, so even a full hour fits in memory.
+- **Works offline** — the app installs as a PWA and runs with no network at all.
+
+| Key | Action |
+| --- | --- |
+| `Space` | play / pause |
+| `←` `→` | skip 30 seconds |
+| `N` `P` | next / previous movement |
+| `Q` `Esc` | quiet mode |
 
 ## Run it
 
-It is a static site with no build step and no dependencies.
+A static site with no build step and no dependencies.
 
 ```bash
 npm start            # serves http://localhost:5173
 # or: python3 -m http.server 5173
 ```
 
-Opening `index.html` directly from disk also works in most browsers.
+Opening `index.html` from disk also works, except for the offline service worker.
 
 ### Deploy
 
-A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** on the repository and every push to `main` publishes the app.
+A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** and every push to `main` publishes the app.
 
 ## Tests
 
 ```bash
-npm test               # node --test: composer, theory, PRNG
-npm run test:browser   # Playwright + Chromium: renders every style offline, checks levels,
-                       # determinism, the loop seam, live transport, save/load and share links
+npm test               # node --test: PRNG, theory, composer, styles, app shell
+npm run test:browser   # Playwright + Chromium, end to end
 ```
+
+The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, that the live transport advances, wraps, seeks and releases its sources, and that steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser and save/load/share all behave.
 
 ## How it works
 
 ```
-seed + style ──► composer ──► plan (movements: key, mode, tempo, chords, layer levels, ambience weights)
-                                 │
-                       transport walks 16th-note steps 2.5 s ahead of the clock
-                                 │
-        ┌────────────────────────┼──────────────────────────┐
-     synths                    drums                     ambience
- pads · drone · bell        kick · snare              rain · thunder · wind · waves
- electric piano · pluck     hat · shaker              fire · birds · crickets · vinyl
-        └────────────────────────┼──────────────────────────┘
-                     layer gains (mood × mixer) → lo-fi filter/saturation → reverb → compressor
+seed + style + time of day + edits
+        │
+        ▼
+    composer ──► plan (movements: key, mode, tempo, chords, layer levels, ambience weights)
+        │
+        ▼   transport walks 16th-note steps 2.5 s ahead of the clock
+        │
+   ┌────┴─────────────────┬──────────────────────┐
+ synths                 drums                 ambience
+ pad · drone · bell    lo-fi · brush        rain · thunder · wind · waves · creek
+ piano · e-piano       · electro            fire · birds · crickets · chimes
+ pluck · bass                               café · train · vinyl
+   └────┬─────────────────┴──────────────────────┘
+        ▼
+ layer gains (mood x mixer x duck) ─► pump bus ─► tape wobble ─► filter ─► saturation
+        └─► sends ─► hall / room reverb ──────────────────────────────► compressor ─► output
 ```
 
-Every random decision is drawn from a PRNG keyed on `seed + movement + bar + step`, so the same seed always produces the same hour, each loop is identical, and offline export sounds exactly like playback.
+Every random decision is drawn from a generator keyed on `seed + movement + bar + step`, which is what makes a seed reproducible, a loop identical to the last, and an offline export the same as what you heard.
 
 | File | Role |
 | --- | --- |
 | `js/prng.js` | seeded random numbers |
 | `js/theory.js` | modes, diatonic chords, voicings |
-| `js/composer.js` | styles, moods, plan generation |
-| `js/audio/graph.js` | master chain, buses, reverb, noise buffers |
-| `js/audio/synths.js` | pad, drone, bell, electric piano, pluck, bass |
-| `js/audio/drums.js` | lo-fi kit and 16-step patterns |
-| `js/audio/ambience.js` | environment textures |
+| `js/composer.js` | styles, moods, dayparts, plan generation |
+| `js/audio/graph.js` | shared output, buses, reverbs, tape path, noise beds |
+| `js/audio/synths.js` | pad, drone, bell, electric piano, piano, pluck, bass |
+| `js/audio/drums.js` | three kits and their patterns |
+| `js/audio/ambience.js` | twelve environment textures |
 | `js/audio/engine.js` | performance logic and the transport / scheduler |
-| `js/audio/recorder.js` | live recording and offline WAV export |
-| `js/storage.js` | library, autosave, share codes |
+| `js/audio/recorder.js` | live recording and chunked WAV export |
+| `js/storage.js` | library, autosave, preferences, share codes |
+| `js/visual.js` | canvas visualiser |
+| `js/card.js` | share card image |
 | `js/app.js` | UI |
+| `sw.js` | offline app shell |
 
 ## License
 

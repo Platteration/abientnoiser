@@ -92,6 +92,16 @@
       </div>
       <p class="hint" id="libraryEmpty">Nothing saved yet. Find a seed and mix you like, save it, and it’s here next time — mixes live in this browser only.</p>
       <ul class="mixes" id="mixList"></ul>
+      <h2>Queue <small>— crossfade from one mix to the next</small></h2>
+      <ol class="queue" id="queueList"></ol>
+      <p class="hint" id="queueEmpty">Add saved mixes with ＋ and they play one after another, each fading into the next. Good for a whole working day.</p>
+      <div class="inline wrap">
+        <label class="mini"><span>Play each for</span><select id="queueEvery"></select></label>
+        <label class="mini"><span>Crossfade</span><select id="crossfade"></select></label>
+        <button id="queueNow" type="button" class="ghost sm">Play next now</button>
+        <button id="queueClear" type="button" class="ghost sm">Clear queue</button>
+      </div>
+
       <div class="inline wrap">
         <button id="export" type="button" class="ghost sm">Export library</button>
         <button id="import" type="button" class="ghost sm">Import library</button>

@@ -313,6 +313,47 @@ try {
   check(card.type === 'image/png' && card.w === 1200 && card.h === 630 && card.size > 20000,
     `share card renders a ${card.w}x${card.h} PNG (${(card.size / 1024).toFixed(0)} KB)`);
 
+  // queue with crossfade: two mixes overlap, then the old engine is released
+  const queue = await page.evaluate(async () => {
+    // two distinct saved mixes
+    AmbientNoiser.applySettings(Object.assign(AN.defaultSettings('ambient'), { seed: 'queue-a' }));
+    const a = AN.storage.save('Queue A', AmbientNoiser.state.settings);
+    AmbientNoiser.applySettings(Object.assign(AN.defaultSettings('lofi'), { seed: 'queue-b' }));
+    const b = AN.storage.save('Queue B', AmbientNoiser.state.settings);
+    AmbientNoiser.state.queue = [];
+    AmbientNoiser.enqueue(a.id);
+    AmbientNoiser.enqueue(b.id);
+    AmbientNoiser.renderQueue();
+
+    const engine = AmbientNoiser.ensureEngine();
+    if (!engine.transport.playing) engine.transport.play();
+    await new Promise((r) => setTimeout(r, 600));
+    const before = { engine, seed: AmbientNoiser.state.settings.seed, output: engine.graph.output === AmbientNoiser.state.output };
+
+    const t0 = performance.now();
+    AmbientNoiser.crossfadeTo(AN.storage.get(a.id).settings, 1.5);
+    const buildMs = performance.now() - t0;
+    await new Promise((r) => setTimeout(r, 500));
+    const during = {
+      swapped: AmbientNoiser.state.engine !== before.engine,
+      oldStillSounding: before.engine.graph.sources.size > 0,
+      newSounding: AmbientNoiser.state.engine.graph.sources.size > 0,
+      seed: AmbientNoiser.state.settings.seed,
+      seedField: document.getElementById('seed').value,
+    };
+    await new Promise((r) => setTimeout(r, 2600));
+    const after = { oldReleased: before.engine.graph.sources.size === 0, newPlaying: AmbientNoiser.state.engine.transport.playing };
+    AmbientNoiser.state.engine.transport.pause();
+    return { before, during, after, buildMs, queued: AmbientNoiser.state.queue.length, rows: document.querySelectorAll('#queueList li').length };
+  });
+  check(queue.before.output, 'engines feed one shared output, so recording and visuals see everything');
+  check(queue.during.swapped && queue.during.oldStillSounding && queue.during.newSounding,
+    'both mixes sound at once during a crossfade');
+  check(queue.during.seed === 'queue-a' && queue.during.seedField === 'queue-a', 'the controls follow the incoming mix');
+  check(queue.after.oldReleased && queue.after.newPlaying, 'the outgoing engine is released once the fade ends');
+  check(queue.queued === 2 && queue.rows === 2, `queue holds ${queue.queued} mixes`);
+  check(queue.buildMs < 400, `building the incoming engine takes ${queue.buildMs.toFixed(0)} ms`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

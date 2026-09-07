@@ -3,6 +3,36 @@
 (function (root) {
   const AN = root.AN = root.AN || {};
 
+  /* Impulse responses and noise beds are identical for every graph at a given
+   * sample rate and cost real time to synthesise, so build each one once. They
+   * are plain AudioBuffers and can be shared across contexts. */
+  const BUFFERS = new Map();
+  function cachedBuffer(key, build) {
+    if (!BUFFERS.has(key)) BUFFERS.set(key, build());
+    return BUFFERS.get(key);
+  }
+
+  /** The shared tail of the live audio chain: everything playing feeds one of
+   *  these, so recording and the visualiser see the whole mix — including two
+   *  pieces overlapping during a crossfade. */
+  class Output {
+    constructor(ctx) {
+      this.ctx = ctx;
+      this.node = ctx.createGain();
+      this.node.connect(ctx.destination);
+      if (typeof ctx.createAnalyser === 'function') {
+        this.analyser = ctx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        this.analyser.smoothingTimeConstant = 0.82;
+        this.node.connect(this.analyser);
+      }
+      if (typeof ctx.createMediaStreamDestination === 'function') {
+        this.recordDest = ctx.createMediaStreamDestination();
+        this.node.connect(this.recordDest);
+      }
+    }
+  }
+
   class Graph {
     constructor(ctx, opts = {}) {
       this.ctx = ctx;
@@ -15,17 +45,10 @@
       this.comp.threshold.value = -14; this.comp.knee.value = 18; this.comp.ratio.value = 5;
       this.comp.attack.value = 0.01; this.comp.release.value = 0.3;
       this.master.connect(this.comp);
-      this.comp.connect(c.destination);
-      if (!opts.offline && typeof c.createAnalyser === 'function') {
-        this.analyser = c.createAnalyser();
-        this.analyser.fftSize = 1024;
-        this.analyser.smoothingTimeConstant = 0.82;
-        this.comp.connect(this.analyser);
-      }
-      if (typeof c.createMediaStreamDestination === 'function') {
-        this.recordDest = c.createMediaStreamDestination();
-        this.comp.connect(this.recordDest);
-      }
+      this.output = opts.output || null;
+      this.comp.connect(this.output ? this.output.node : c.destination);
+      this.analyser = this.output ? this.output.analyser : null;
+      this.recordDest = this.output ? this.output.recordDest : null;
 
       // reverb (generated impulse responses): a long hall, and a short room for drums
       this.reverb = c.createConvolver();
@@ -77,7 +100,6 @@
       this.ambienceBus.connect(this.master);
 
       this.layers = {};
-      this._noise = {};
       this._offset = 0;
     }
 
@@ -145,6 +167,10 @@
     }
 
     makeImpulse(seconds, decay, kind = 'hall') {
+      return cachedBuffer(`ir:${kind}:${seconds}:${decay}:${this.ctx.sampleRate}`, () => this.buildImpulse(seconds, decay, kind));
+    }
+
+    buildImpulse(seconds, decay, kind) {
       const c = this.ctx, sr = c.sampleRate, len = Math.floor(sr * seconds);
       const buf = c.createBuffer(2, len, sr);
       const rng = AN.rng('impulse', kind);
@@ -164,7 +190,10 @@
 
     /** Looping noise buffer: 'white' | 'pink' | 'brown' */
     noise(type) {
-      if (this._noise[type]) return this._noise[type];
+      return cachedBuffer(`noise:${type}:${this.ctx.sampleRate}`, () => this.buildNoise(type));
+    }
+
+    buildNoise(type) {
       const c = this.ctx, sr = c.sampleRate, len = sr * 4;
       const buf = c.createBuffer(2, len, sr);
       const rng = AN.rng('noise', type);
@@ -191,7 +220,7 @@
           }
         }
       }
-      return (this._noise[type] = buf);
+      return buf;
     }
 
     noiseSource(type, t, loop = true) {
@@ -230,4 +259,5 @@
   }
 
   AN.Graph = Graph;
+  AN.Output = Output;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

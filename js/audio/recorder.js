@@ -3,8 +3,8 @@
   const AN = root.AN = root.AN || {};
 
   class Recorder {
-    constructor(graph) {
-      this.graph = graph;
+    constructor(output) {
+      this.graph = output;
       this.rec = null;
       this.chunks = [];
       this.startedAt = 0;

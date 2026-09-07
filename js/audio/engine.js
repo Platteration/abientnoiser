@@ -16,7 +16,7 @@
       this.ctx = ctx;
       this.plan = plan;
       this.settings = settings;
-      this.graph = new AN.Graph(ctx, { volume: settings.volume, offline: opts.offline });
+      this.graph = new AN.Graph(ctx, { volume: settings.volume, offline: opts.offline, output: opts.output });
       for (const l of AN.MUSIC_LAYERS) this.graph.layer(l.id, BUSES[l.id] || 'music', SENDS[l.id], REVERBS[l.id]);
       this.graph.layer('drone', 'pump', SENDS.drone);
       this.graph.layer('ui', 'music', 0.4); // timer chimes, always audible
@@ -328,7 +328,7 @@
       return this.wrap(this.ctx.currentTime - this.baseCtx);
     }
 
-    play() {
+    play(opts = {}) {
       if (this.playing) return;
       const ctx = this.ctx;
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
@@ -339,7 +339,7 @@
       const m = this.engine.graph.master.gain;
       m.cancelScheduledValues(t);
       m.setValueAtTime(0, t);
-      m.linearRampToValueAtTime(this.engine.settings.volume, t + 0.8);
+      m.linearRampToValueAtTime(this.engine.settings.volume, t + (opts.fade || 0.8));
       this.engine.startTextures(t);
       this._startTimer();
       this.schedule();
@@ -391,6 +391,25 @@
     }
 
     toggle() { this.playing ? this.pause() : this.play(); }
+
+    /** Fade out over `fade` seconds, then stop and release everything. */
+    dispose(fade = 0) {
+      const ctx = this.ctx, t = ctx.currentTime;
+      const m = this.engine.graph.master.gain;
+      m.cancelScheduledValues(t);
+      m.setValueAtTime(m.value, t);
+      m.linearRampToValueAtTime(0, t + Math.max(0.05, fade));
+      this.playing = false;
+      this._stopTimer();
+      const gen = ++this.gen;
+      setTimeout(() => {
+        if (this.gen !== gen) return;
+        const now = ctx.currentTime;
+        this.engine.graph.killAll(now);
+        this.engine.stopTextures(now);
+        try { this.engine.graph.comp.disconnect(); } catch (e) { /* already gone */ }
+      }, Math.max(100, fade * 1000 + 400));
+    }
 
     _enter(pos, ctxTime, fromSeek) {
       this.enterAt = ctxTime;

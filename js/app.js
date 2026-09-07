@@ -6,12 +6,17 @@
   const DURATIONS = [30, 45, 60, 90, 120];
   const SECTION_MINS = [2, 3, 4, 5, 6, 8];
 
-  const state = { settings: null, plan: null, engine: null, recorder: null, sleepAt: null, wavBusy: false, lastSectionIdx: -1 };
+  const state = {
+    settings: null, plan: null, engine: null, recorder: null, sleepAt: null,
+    wavBusy: false, lastSectionIdx: -1, queue: [], queueIndex: 0, mixStartedAt: 0,
+  };
   const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
   const POMODOROS = [[0, 'Off'], [25, '25 + 5 min'], [50, '50 + 10 min'], [90, '90 + 20 min']];
   const BREAK_DUCK = { drums: 0.12, melody: 0.3, arp: 0.2, bass: 0.55, pads: 0.85 };
   const VISUALS = [['on', 'On'], ['off', 'Off']];
+  const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
+  const CROSSFADES = [4, 8, 15, 30];
 
   // ---------- init ----------
   function init() {
@@ -30,6 +35,10 @@
     buildSelect($('daypart'), DAYPARTS.map((d) => d[0]), (v) => DAYPARTS.find((d) => d[0] === v)[1], state.settings.daypart || '');
     buildSelect($('pomodoro'), POMODOROS.map((p) => p[0]), (v) => POMODOROS.find((p) => Number(p[0]) === Number(v))[1], 0);
     buildWavLengths();
+    buildSelect($('queueEvery'), QUEUE_EVERY.map((q) => q[0]), (v) => QUEUE_EVERY.find((q) => Number(q[0]) === Number(v))[1], AN.storage.prefs().queueEvery || 0);
+    buildSelect($('crossfade'), CROSSFADES, (v) => `${v} s`, AN.storage.prefs().crossfade || 8);
+    state.queue = (AN.storage.prefs().queue || []).filter((id) => AN.storage.get(id));
+    state.queueIndex = 0;
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
     $('seed').value = state.settings.seed;
@@ -37,6 +46,7 @@
     applyAccent();
     renderPlan();
     renderLibrary();
+    renderQueue();
     bind();
     if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
@@ -304,8 +314,8 @@
     autosave();
   }
 
-  function applySettings(s) {
-    state.settings = AN.storage.cleanSettings(s);
+  /** Point every control at state.settings without rebuilding the plan. */
+  function syncControls() {
     $('seed').value = state.settings.seed;
     $('volume').value = Math.round(state.settings.volume * 100);
     $('daypart').value = state.settings.daypart || '';
@@ -313,6 +323,12 @@
     buildSelect($('sectionMin'), SECTION_MINS.includes(state.settings.sectionMin) ? SECTION_MINS : SECTION_MINS.concat([state.settings.sectionMin]).sort((a, b) => a - b), (v) => `${v} min`, state.settings.sectionMin);
     refreshMixer();
     applyAccent();
+    buildWavLengths();
+  }
+
+  function applySettings(s) {
+    state.settings = AN.storage.cleanSettings(s);
+    syncControls();
     if (state.engine) state.engine.setVolume(state.settings.volume, state.engine.ctx.currentTime);
     recompose();
   }
@@ -324,15 +340,116 @@
     if (!Ctx) { toast('Web Audio is not supported in this browser'); return null; }
     let ctx;
     try { ctx = new Ctx({ latencyHint: 'playback' }); } catch (e) { ctx = new Ctx(); }
-    state.engine = new AN.Engine(ctx, state.plan, state.settings);
-    state.engine.transport.onLoop = (n) => toast(`Loop ${n + 1} — starting over, seamlessly`);
-    state.recorder = AN.Recorder.supported() ? new AN.Recorder(state.engine.graph) : null;
+    state.ctx = ctx;
+    state.output = new AN.Output(ctx);
+    state.engine = newEngine();
+    state.recorder = AN.Recorder.supported() ? new AN.Recorder(state.output) : null;
     return state.engine;
+  }
+
+  function newEngine() {
+    const engine = new AN.Engine(state.ctx, state.plan, state.settings, { output: state.output });
+    engine.transport.onLoop = (n) => toast(`Loop ${n + 1} — starting over, seamlessly`);
+    return engine;
+  }
+
+  // ---------- queue ----------
+  function saveQueue() {
+    AN.storage.setPref('queue', state.queue);
+    AN.storage.setPref('queueEvery', Number($('queueEvery').value) || 0);
+    AN.storage.setPref('crossfade', Number($('crossfade').value) || 8);
+  }
+
+  function renderQueue() {
+    const list = $('queueList');
+    list.innerHTML = '';
+    $('queueEmpty').hidden = state.queue.length > 0;
+    $('queueNow').disabled = state.queue.length === 0;
+    state.queue.forEach((id, i) => {
+      const mix = AN.storage.get(id);
+      if (!mix) return;
+      const st = AN.STYLES[mix.settings.style] || AN.STYLES.ambient;
+      const li = document.createElement('li');
+      if (i === state.queueIndex % Math.max(1, state.queue.length)) li.className = 'next';
+      li.innerHTML = `<span class="qname">${st.icon} ${escapeHtml(mix.name)}</span>
+        <span class="qmeta">${st.name}</span>
+        <button type="button" class="ghost sm up" title="Move up">↑</button>
+        <button type="button" class="ghost sm out" title="Remove from queue">✕</button>`;
+      li.querySelector('.up').addEventListener('click', () => {
+        if (i === 0) return;
+        [state.queue[i - 1], state.queue[i]] = [state.queue[i], state.queue[i - 1]];
+        saveQueue(); renderQueue();
+      });
+      li.querySelector('.out').addEventListener('click', () => {
+        state.queue.splice(i, 1);
+        if (state.queueIndex > state.queue.length) state.queueIndex = 0;
+        saveQueue(); renderQueue();
+      });
+      list.appendChild(li);
+    });
+  }
+
+  function enqueue(id) {
+    if (state.queue.includes(id)) return toast('Already in the queue');
+    state.queue.push(id);
+    saveQueue();
+    renderQueue();
+    const mix = AN.storage.get(id);
+    toast(`Queued “${mix ? mix.name : 'mix'}”`);
+  }
+
+  /** Bring the next queued mix in over `fade` seconds, both pieces sounding at once. */
+  function crossfadeTo(settings, fade) {
+    const engine = ensureEngine();
+    if (!engine) return;
+    const old = engine;
+    state.settings = AN.storage.cleanSettings(settings);
+    state.plan = AN.compose(state.settings);
+    state.editing = null;
+    const next = newEngine();
+    state.engine = next;
+    next.transport.play({ fade });
+    old.transport.dispose(fade);
+    state.crossfadeUntil = performance.now() + fade * 1000;
+    state.mixStartedAt = performance.now();
+    syncControls();
+    renderPlan();
+    updatePlayButton();
+  }
+
+  function advanceQueue() {
+    if (!state.queue.length) return;
+    const fade = Number($('crossfade').value) || 8;
+    const id = state.queue[state.queueIndex % state.queue.length];
+    state.queueIndex = (state.queueIndex + 1) % state.queue.length;
+    const mix = AN.storage.get(id);
+    if (!mix) {
+      state.queue = state.queue.filter((q) => q !== id);
+      saveQueue(); renderQueue();
+      return;
+    }
+    crossfadeTo(mix.settings, fade);
+    renderQueue();
+    toast(`Crossfading into “${mix.name}”`);
+  }
+
+  function tickQueue() {
+    if (!state.queue.length || !state.engine || !state.engine.transport.playing) return;
+    if (state.crossfadeUntil && performance.now() < state.crossfadeUntil) return;
+    const fade = Number($('crossfade').value) || 8;
+    const every = Number($('queueEvery').value) || 0;
+    if (every) {
+      if (performance.now() - (state.mixStartedAt || 0) >= every * 60000) advanceQueue();
+      return;
+    }
+    const t = state.engine.transport;
+    if (t.duration > fade * 3 && t.duration - t.now() <= fade) advanceQueue();
   }
 
   function togglePlay() {
     const engine = ensureEngine();
     if (!engine) return;
+    if (!engine.transport.playing) state.mixStartedAt = performance.now();
     engine.transport.toggle();
     updatePlayButton();
   }
@@ -420,6 +537,7 @@
       $('recStatus').textContent = `Recording… ${AN.formatTime(state.recorder.elapsed)}`;
     }
     tickPomodoro();
+    tickQueue();
     if (state.sleepAt && engine && engine.transport.playing) {
       const left = (state.sleepAt - Date.now()) / 1000;
       $('sleepStatus').textContent = `Stops in ${AN.formatTime(Math.max(0, left))}`;
@@ -511,13 +629,20 @@
           <button type="button" class="load" title="Load this mix"><span class="icon">${st.icon}</span><span><strong>${escapeHtml(m.name)}</strong><small>${st.name} · ${m.settings.durationMin} min · seed ${escapeHtml(m.settings.seed)}${env ? ' · ' + env : ''}</small></span></button>
         </div>
         <div class="mix-actions">
+          <button type="button" class="ghost sm enqueue" title="Add to the queue">＋</button>
           <button type="button" class="ghost sm share" title="Copy share link">Link</button>
           <button type="button" class="ghost sm del" title="Delete">✕</button>
         </div>`;
       li.querySelector('.load').addEventListener('click', () => { applySettings(m.settings); toast(`Loaded “${m.name}”`); });
+      li.querySelector('.enqueue').addEventListener('click', () => enqueue(m.id));
       li.querySelector('.share').addEventListener('click', () => copyShare(m.settings));
       li.querySelector('.del').addEventListener('click', () => {
-        if (confirm(`Delete “${m.name}”?`)) { AN.storage.remove(m.id); renderLibrary(); }
+        if (!confirm(`Delete “${m.name}”?`)) return;
+        AN.storage.remove(m.id);
+        state.queue = state.queue.filter((q) => q !== m.id);
+        saveQueue();
+        renderLibrary();
+        renderQueue();
       });
       list.appendChild(li);
     }
@@ -657,6 +782,10 @@
       } catch (e) { toast(`Could not draw the image: ${e.message}`); }
     });
     $('resetEdits').addEventListener('click', resetAllEdits);
+    $('queueEvery').addEventListener('change', () => { saveQueue(); state.mixStartedAt = performance.now(); });
+    $('crossfade').addEventListener('change', saveQueue);
+    $('queueNow').addEventListener('click', () => { ensureEngine(); advanceQueue(); });
+    $('queueClear').addEventListener('click', () => { state.queue = []; state.queueIndex = 0; saveQueue(); renderQueue(); });
     $('export').addEventListener('click', () => {
       AN.download(new Blob([AN.storage.exportAll()], { type: 'application/json' }), 'ambient-noiser-mixes.json');
     });
@@ -686,6 +815,9 @@
     window.addEventListener('beforeunload', autosave);
   }
 
-  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro, openEditor, setEdit, resetAllEdits };
+  window.AmbientNoiser = {
+    state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro,
+    openEditor, setEdit, resetAllEdits, enqueue, advanceQueue, crossfadeTo, renderQueue,
+  };
   document.addEventListener('DOMContentLoaded', init);
 })();

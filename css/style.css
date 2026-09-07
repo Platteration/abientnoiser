@@ -238,3 +238,12 @@ body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-i
 
 /* keep the movement list readable over the visualiser */
 .movements[open] ol { background: color-mix(in srgb, var(--card) 84%, transparent); border-radius: 10px; padding: 0.3rem; }
+
+/* queue */
+.queue { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.3rem; counter-reset: q; }
+.queue li { display: flex; gap: 0.5rem; align-items: center; background: var(--card2); border: 1px solid var(--line); border-radius: 9px; padding: 0.35rem 0.6rem; font-size: 0.9rem; }
+.queue li::before { counter-increment: q; content: counter(q); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.1em; }
+.queue li.next { border-color: var(--accent); }
+.queue .qname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue .qmeta { color: var(--muted); font-size: 0.8rem; }
+.mixes .enqueue { font-size: 1rem; }
