@@ -312,19 +312,36 @@
       this.section = null;
       this.loops = 0;
       this.gen = 0;
-      this.lock = null;      // index of a movement to repeat instead of moving on
+      this.lock = null;         // index of a movement to repeat instead of moving on
+      this.awaitingLoop = false; // scheduled to the end of the locked movement, waiting to re-enter
+      this.clockFrom = null;    // a rebase that has been scheduled but not yet reached
       this.onLoop = null;
     }
 
     get duration() { return this.plan.duration; }
     wrap(p) { const d = this.duration; return ((p % d) + d) % d; }
 
-    /** Current piece position in seconds. A seek schedules its first step a moment
-     *  ahead of the clock, so report the target position until playback reaches it. */
+    /** Current piece position in seconds.
+     *  Two things sit between scheduling time and heard time. A seek schedules its
+     *  first step a moment ahead, so report the target until playback reaches it.
+     *  A locked movement is re-scheduled from its start as soon as the scheduler
+     *  reaches the end — up to `lookahead` early — so keep reporting against the
+     *  old mapping until playback actually reaches that boundary. */
     now() {
       if (!this.playing) return this.position;
-      if (this.enterAt != null && this.ctx.currentTime < this.enterAt) return this.wrap(this.enterPos);
-      return this.wrap(this.ctx.currentTime - this.baseCtx);
+      const t = this.ctx.currentTime;
+      let p;
+      if (this.clockFrom && t < this.clockFrom.at) p = this.wrap(t - this.clockFrom.baseCtx);
+      else if (this.enterAt != null && t < this.enterAt) p = this.wrap(this.enterPos);
+      else p = this.wrap(t - this.baseCtx);
+      if (this.lock != null) {
+        // A movement rarely divides exactly into sixteenth notes, so its final step
+        // can run a fraction past the end. Nothing from the next movement is ever
+        // scheduled while locked, so report the position inside the movement.
+        const ls = this.plan.sections[this.lock];
+        if (ls) p = Math.min(Math.max(p, ls.start), ls.end - 0.001);
+      }
+      return p;
     }
 
     play(opts = {}) {
@@ -365,11 +382,14 @@
     /** Repeat one movement forever (null clears). */
     setLock(index) {
       this.lock = index;
-      if (index != null && this.playing) {
-        const s = this.plan.sections[index];
-        const now = this.now();
-        if (now < s.start || now >= s.end) this.seek(s.start);
-      }
+      this.awaitingLoop = false;
+      if (index == null || !this.playing) return;
+      const s = this.plan.sections[index];
+      const now = this.now();
+      if (now < s.start || now >= s.end) return this.seek(s.start);
+      // the scheduler runs ahead and may already have queued the next movement;
+      // re-arm from where playback actually is so the lock takes effect
+      if (this.cursor - this.baseCtx >= s.end) this.seek(now);
     }
 
     seek(pos) {
@@ -419,9 +439,12 @@
       }, Math.max(100, fade * 1000 + 400));
     }
 
-    _enter(pos, ctxTime, fromSeek) {
+    _enter(pos, ctxTime, fromSeek, clockAt) {
+      this.awaitingLoop = false;
       this.enterAt = ctxTime;
       this.enterPos = pos;
+      // hold the previous mapping until `clockAt`, for a rebase scheduled ahead of playback
+      this.clockFrom = clockAt == null ? null : { at: clockAt, baseCtx: this.baseCtx };
       const section = AN.sectionAt(this.plan, pos);
       const stepLen = 60 / section.tempo / 4;
       this.baseCtx = ctxTime - pos;
@@ -435,23 +458,33 @@
     /** Schedule every step up to `limit` (ctx seconds). */
     scheduleUntil(limit) {
       let guard = 0;
-      while (this.cursor < limit && guard++ < 100000) this.step();
+      while (this.cursor < limit && !this.awaitingLoop && guard++ < 100000) this.step();
     }
 
     schedule() {
       if (!this.playing) return;
+      if (this.awaitingLoop) {
+        const ls = this.plan.sections[this.lock];
+        if (!ls) {
+          this.awaitingLoop = false;
+        } else {
+          // Re-scheduling starts now so the repeat runs on without a gap, but the
+          // clock keeps the old mapping until playback reaches the boundary.
+          this.awaitingLoop = false;
+          this._enter(ls.start, this.cursor, true, this.cursor);
+        }
+      }
       this.scheduleUntil(this.ctx.currentTime + this.lookahead);
     }
 
     step() {
       let p = this.cursor - this.baseCtx;
-      if (this.lock != null) { // repeat one movement: rewind piece time by its length
+      if (this.lock != null) {
+        // A locked movement repeats by re-entering it once playback reaches the end,
+        // not by rewinding piece time here: the scheduler is up to `lookahead`
+        // seconds ahead, so rewinding would jump the clock before anything is heard.
         const ls = this.plan.sections[this.lock];
-        if (ls && p >= ls.end - 1e-6) {
-          this.baseCtx += ls.length;
-          p -= ls.length;
-          this.section = null;
-        }
+        if (ls && p >= ls.end - 1e-6) { this.awaitingLoop = true; return; }
       }
       if (p >= this.duration - 1e-6) { // loop seam
         this.baseCtx += this.duration;
@@ -482,6 +515,7 @@
      *  can ask for a lead-in and then discard it. */
     renderRange(seconds, from = 0) {
       this.playing = true;
+      this.lock = null; // an offline render always plays the piece straight through
       this._enter(this.wrap(from), 0, true);
       this.engine.startTextures(0);
       this.scheduleUntil(seconds + 0.5);

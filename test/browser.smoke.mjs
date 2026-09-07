@@ -14,7 +14,16 @@ catch { ({ chromium } = require(path.join(process.env.NODE_GLOBAL_MODULES || '/o
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = 5199;
-const server = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
+// keep the static server's output: if it dies mid-run every later navigation
+// fails with a bare connection error, which is otherwise a mystery
+const server = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], {
+  env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+});
+let serverLog = '';
+let serverGone = null;
+server.stdout.on('data', (d) => { serverLog += d; });
+server.stderr.on('data', (d) => { serverLog += d; });
+server.on('exit', (code, signal) => { serverGone = `static server exited early (code ${code}, signal ${signal})`; });
 await new Promise((r) => setTimeout(r, 500));
 
 let failures = 0;
@@ -153,18 +162,41 @@ try {
   });
   check(steered.up > steered.before && steered.down < steered.up, `steering moves between movements (${steered.before.toFixed(2)} -> ${steered.up.toFixed(2)} -> ${steered.down.toFixed(2)})`);
 
+  // Locking must hold the movement whether it is set well before the end or inside
+  // the scheduler's lookahead window, and the reported position must never leave it.
   const locked = await page.evaluate(async () => {
-    const t = AmbientNoiser.state.engine.transport;
-    const sec = AN.sectionAt(AmbientNoiser.state.plan, t.now());
-    t.seek(sec.end - 1.5);
-    AmbientNoiser.setLock(true);
-    await new Promise((r) => setTimeout(r, 3000));
-    const now = t.now();
-    const at = AN.sectionAt(AmbientNoiser.state.plan, now);
-    AmbientNoiser.setLock(false);
-    return { lockedIndex: sec.index, nowIndex: at.index, loops: t.loops };
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const runs = [];
+    for (const lead of [4, 1]) {
+      const t = AmbientNoiser.state.engine.transport;
+      t.setLock(null);
+      if (!t.playing) t.play();
+      await wait(300);
+      const sec = AN.sectionAt(AmbientNoiser.state.plan, t.now());
+      t.seek(sec.end - lead);
+      await wait(400); // let the scheduler queue its lookahead past the boundary
+      const queuedPastEnd = t.cursor - t.baseCtx >= sec.end;
+      AmbientNoiser.setLock(true);
+      const strayed = [];
+      let quietest = Infinity;
+      for (let i = 0; i < 14; i++) {
+        await wait(200);
+        const pos = t.now();
+        if (pos < sec.start || pos >= sec.end) strayed.push(+pos.toFixed(2));
+        quietest = Math.min(quietest, AmbientNoiser.state.engine.graph.sources.size);
+      }
+      runs.push({ lead, section: sec.index, queuedPastEnd, strayed, quietest, ended: AN.sectionAt(AmbientNoiser.state.plan, t.now()).index });
+      AmbientNoiser.setLock(false);
+    }
+    return runs;
   });
-  check(locked.nowIndex === locked.lockedIndex, `lock repeats one movement (still in movement ${locked.nowIndex + 1})`);
+  for (const run of locked) {
+    check(run.ended === run.section && run.strayed.length === 0 && run.quietest > 0,
+      `lock holds movement ${run.section + 1} when set ${run.lead}s before its end`
+      + `${run.queuedPastEnd ? ' (scheduler already past the boundary)' : ''}`
+      + `, no gap (min ${run.quietest} sources)`
+      + `${run.strayed.length ? ` — clock strayed to ${run.strayed.slice(0, 3).join(', ')}` : ''}`);
+  }
 
   // focus timer ducks the mix on a break and restores it after
   const pomo = await page.evaluate(async () => {
@@ -609,6 +641,7 @@ try {
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
+  if (serverGone) console.error(`${serverGone}\n--- server output ---\n${serverLog}`);
   console.error(e);
   failures++;
 } finally {

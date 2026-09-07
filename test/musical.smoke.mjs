@@ -15,7 +15,16 @@ catch { ({ chromium } = require(path.join(process.env.NODE_GLOBAL_MODULES || '/o
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = 5201;
-const server = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
+// keep the static server's output: if it dies mid-run every later navigation
+// fails with a bare connection error, which is otherwise a mystery
+const server = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], {
+  env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+});
+let serverLog = '';
+let serverGone = null;
+server.stdout.on('data', (d) => { serverLog += d; });
+server.stderr.on('data', (d) => { serverLog += d; });
+server.on('exit', (code, signal) => { serverGone = `static server exited early (code ${code}, signal ${signal})`; });
 await new Promise((r) => setTimeout(r, 500));
 
 let failures = 0;
@@ -111,6 +120,7 @@ try {
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
+  if (serverGone) console.error(`${serverGone}\n--- server output ---\n${serverLog}`);
   console.error(e);
   failures++;
 } finally {
