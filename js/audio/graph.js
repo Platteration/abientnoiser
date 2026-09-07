@@ -16,6 +16,12 @@
       this.comp.attack.value = 0.01; this.comp.release.value = 0.3;
       this.master.connect(this.comp);
       this.comp.connect(c.destination);
+      if (!opts.offline && typeof c.createAnalyser === 'function') {
+        this.analyser = c.createAnalyser();
+        this.analyser.fftSize = 1024;
+        this.analyser.smoothingTimeConstant = 0.82;
+        this.comp.connect(this.analyser);
+      }
       if (typeof c.createMediaStreamDestination === 'function') {
         this.recordDest = c.createMediaStreamDestination();
         this.comp.connect(this.recordDest);

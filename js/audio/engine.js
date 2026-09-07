@@ -9,11 +9,11 @@
   const BASS_PATTERNS = [[0, 10], [0, 6, 8], [0, 8, 14], [0, 3, 8, 11]];
 
   class Engine {
-    constructor(ctx, plan, settings) {
+    constructor(ctx, plan, settings, opts = {}) {
       this.ctx = ctx;
       this.plan = plan;
       this.settings = settings;
-      this.graph = new AN.Graph(ctx, { volume: settings.volume });
+      this.graph = new AN.Graph(ctx, { volume: settings.volume, offline: opts.offline });
       for (const l of AN.MUSIC_LAYERS) this.graph.layer(l.id, 'music', SENDS[l.id]);
       this.graph.layer('drone', 'music', SENDS.drone);
       this.graph.layer('ui', 'music', 0.4); // timer chimes, always audible

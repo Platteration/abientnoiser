@@ -212,3 +212,11 @@ body.quiet .steer { justify-content: center; opacity: 0.6; }
 body.quiet .steer:hover { opacity: 1; }
 .pomo-break { --accent: #7ee0b8; }
 .field small { font-variant-numeric: tabular-nums; }
+
+/* visualiser */
+.player { position: relative; overflow: hidden; }
+.visual { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.visual[hidden] { display: none; }
+.player > *:not(.visual) { position: relative; z-index: 1; }
+body.quiet .player { overflow: visible; }
+body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; }

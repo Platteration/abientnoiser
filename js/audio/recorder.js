@@ -49,7 +49,7 @@
     const frames = Math.floor(seconds * sampleRate);
     const ctx = new OAC(2, frames, sampleRate);
     const plan = AN.compose(settings);
-    const engine = new AN.Engine(ctx, plan, settings);
+    const engine = new AN.Engine(ctx, plan, settings, { offline: true });
     engine.transport.renderRange(seconds);
     // fade the render's tail so it ends cleanly
     engine.graph.master.gain.setValueAtTime(settings.volume, Math.max(0, seconds - 3));

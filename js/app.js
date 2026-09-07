@@ -11,6 +11,7 @@
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
   const POMODOROS = [[0, 'Off'], [25, '25 + 5 min'], [50, '50 + 10 min'], [90, '90 + 20 min']];
   const BREAK_DUCK = { drums: 0.12, melody: 0.3, arp: 0.2, bass: 0.55, pads: 0.85 };
+  const VISUALS = [['on', 'On'], ['off', 'Off']];
 
   // ---------- init ----------
   function init() {
@@ -20,6 +21,8 @@
     state.plan = AN.compose(state.settings);
 
     initTheme();
+    initVisuals();
+    registerServiceWorker();
     buildStyles();
     buildSelect($('duration'), DURATIONS, (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS, (v) => `${v} min`, state.settings.sectionMin);
@@ -117,6 +120,26 @@
     }
     document.documentElement.dataset.theme = theme;
     AN.storage.setPref('theme', choice);
+  }
+
+  // ---------- visualiser ----------
+  function initVisuals() {
+    const pref = AN.storage.prefs().visuals === 'off' ? 'off' : 'on';
+    buildSelect($('visuals'), VISUALS.map((v) => v[0]), (v) => VISUALS.find((x) => x[0] === v)[1], pref);
+    state.visual = new AN.Visualizer($('visual'), () => state.engine);
+    state.visual.setEnabled(pref === 'on');
+  }
+
+  function applyVisuals() {
+    const on = $('visuals').value === 'on';
+    AN.storage.setPref('visuals', on ? 'on' : 'off');
+    state.visual.setEnabled(on);
+  }
+
+  // ---------- offline ----------
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
   }
 
   // ---------- quiet mode ----------
@@ -360,6 +383,7 @@
     if (force || s.index !== state.lastSectionIdx) {
       state.lastSectionIdx = s.index;
       document.documentElement.style.setProperty('--mood-hue', s.hue);
+      if (state.visual) state.visual.setSection(s);
       document.documentElement.style.setProperty('--mood-strength', `${8 + s.intensity * 16}%`);
       updateMediaSession(s);
       $('moodName').textContent = s.name;
@@ -482,6 +506,7 @@
   function bind() {
     $('play').addEventListener('click', togglePlay);
     $('theme').addEventListener('change', applyTheme);
+    $('visuals').addEventListener('change', applyVisuals);
     $('quiet').addEventListener('click', () => setQuiet(!document.body.classList.contains('quiet')));
     $('quietExit').addEventListener('click', () => setQuiet(false));
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });

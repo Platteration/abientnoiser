@@ -190,6 +190,28 @@ try {
   check(daypart.off !== daypart.night && daypart.label === 'Night' && daypart.nightBirds < daypart.morningBirds,
     `time of day recolours the plan (night birds ${daypart.nightBirds.toFixed(2)} < morning ${daypart.morningBirds.toFixed(2)})`);
 
+  // the visualiser actually paints while playing
+  const vis = await page.evaluate(async () => {
+    const cv = document.getElementById('visual');
+    AmbientNoiser.state.visual.setEnabled(true);
+    if (!AmbientNoiser.state.engine.transport.playing) AmbientNoiser.state.engine.transport.play();
+    await new Promise((r) => setTimeout(r, 900));
+    const c = cv.getContext('2d');
+    const d = c.getImageData(0, 0, cv.width, cv.height).data;
+    let painted = 0;
+    for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 4) painted++;
+    return { w: cv.width, h: cv.height, painted, hasAnalyser: !!AmbientNoiser.state.engine.graph.analyser };
+  });
+  check(vis.w > 100 && vis.painted > 20 && vis.hasAnalyser, `visualiser paints (${vis.w}x${vis.h}, ${vis.painted} sampled pixels lit)`);
+
+  const visOff = await page.evaluate(() => {
+    AmbientNoiser.state.visual.setEnabled(false);
+    const hidden = document.getElementById('visual').hidden;
+    AmbientNoiser.state.visual.setEnabled(true);
+    return hidden;
+  });
+  check(visOff, 'visualiser can be turned off');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
