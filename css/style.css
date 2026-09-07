@@ -204,3 +204,11 @@ body.quiet .now { gap: 1.6rem; }
 body.quiet .top { padding-bottom: 0; }
 body.quiet h1 { opacity: 0.5; font-size: 1.3rem; }
 body.quiet .timeline { height: 26px; opacity: 0.7; }
+
+/* steering + timers */
+.steer { display: flex; gap: 0.4rem; margin-top: 0.7rem; flex-wrap: wrap; }
+.steer button.active { border-color: var(--accent); color: var(--accent); }
+body.quiet .steer { justify-content: center; opacity: 0.6; }
+body.quiet .steer:hover { opacity: 1; }
+.pomo-break { --accent: #7ee0b8; }
+.field small { font-variant-numeric: tabular-nums; }

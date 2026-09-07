@@ -158,6 +158,24 @@
                words: [['Glowing', 'Neon', 'Faded', 'Evening', 'Small'], ['Streetlight', 'Screen', 'Coals', 'Stars', 'Lantern', 'Postcard']] },
   };
 
+  /** Optional time-of-day colouring. Resolved to a fixed name before composing,
+   *  so a plan stays deterministic and shareable. */
+  AN.DAYPARTS = {
+    morning:   { label: 'Morning',   moodBias: ['still', 'drift', 'lift', 'warm'],      arc: -0.04, brightness: 0.15,  tempo: 1,
+                 ambience: { birds: 1.7, crickets: 0.15, rain: 0.9, chimes: 1.2, fire: 0.6 } },
+    afternoon: { label: 'Afternoon', moodBias: ['warm', 'lift', 'glow', 'drift'],        arc: 0.08,  brightness: 0.1,   tempo: 2,
+                 ambience: { birds: 1.2, cafe: 1.3, crickets: 0.25, fire: 0.6 } },
+    evening:   { label: 'Evening',   moodBias: ['glow', 'warm', 'release', 'drift'],     arc: 0,     brightness: -0.05, tempo: 0,
+                 ambience: { crickets: 1.2, fire: 1.4, birds: 0.35, cafe: 1.1 } },
+    night:     { label: 'Night',     moodBias: ['still', 'deep', 'drift', 'release'],    arc: -0.16, brightness: -0.2,  tempo: -3,
+                 ambience: { crickets: 1.5, rain: 1.15, birds: 0.05, train: 1.3, fire: 1.2, chimes: 0.7 } },
+  };
+
+  AN.daypartAt = function (date) {
+    const h = (date || new Date()).getHours();
+    return h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
+  };
+
   const SEED_WORDS = [
     ['amber', 'blue', 'cedar', 'dusk', 'ember', 'fern', 'glass', 'harbour', 'ivory', 'jade', 'kite', 'lunar', 'moss', 'north', 'ochre', 'pale', 'quiet', 'river', 'slate', 'tidal', 'umber', 'velvet', 'willow', 'zephyr'],
     ['rain', 'lamp', 'window', 'tape', 'cloud', 'signal', 'shore', 'attic', 'garden', 'static', 'orbit', 'harbor', 'lantern', 'meadow', 'monsoon', 'tide', 'ember', 'canyon', 'radio', 'sleeper'],
@@ -205,7 +223,10 @@
     const seed = String(settings.seed || 'default');
     const duration = clamp(Number(settings.durationMin) || 60, 5, 240) * 60;
     const sectionLen = clamp(Number(settings.sectionMin) || 4, 1, 15) * 60;
-    const rng = AN.rng(seed, styleId, 'plan');
+    const wanted = settings.daypart === 'auto' ? AN.daypartAt(new Date()) : settings.daypart;
+    const daypart = AN.DAYPARTS[wanted] ? wanted : null;
+    const dp = daypart ? AN.DAYPARTS[daypart] : null;
+    const rng = AN.rng(seed, styleId, daypart || '-', 'plan');
 
     // --- section boundaries: roughly sectionLen each, varied ±25%, summing to duration
     let n = Math.max(2, Math.round(duration / sectionLen));
@@ -229,14 +250,14 @@
     for (let i = 0; i < n; i++) {
       const phase = n === 1 ? 0.5 : i / (n - 1);
       const arc = 0.22 + 0.55 * Math.abs(Math.sin(Math.PI * peaks * phase));
-      const target = clamp(arc + rng.gauss(0, 0.12), 0.1, 0.9);
+      const target = clamp(arc + (dp ? dp.arc : 0) + rng.gauss(0, 0.12), 0.1, 0.9);
 
       let moodId;
       if (prev && prev.moodId === 'tension' && rng.bool(0.7)) moodId = 'release';
       else {
         const ranked = moodIds
           .filter((id) => !prev || id !== prev.moodId)
-          .map((id) => [id, Math.abs(AN.MOODS[id].intensity - target)])
+          .map((id) => [id, Math.abs(AN.MOODS[id].intensity - target) - (dp && dp.moodBias.includes(id) ? 0.12 : 0)])
           .sort((a, b) => a[1] - b[1]);
         moodId = rng.weighted([[ranked[0][0], 5], [ranked[1][0], 3], [ranked[2][0], 1]]);
       }
@@ -248,9 +269,9 @@
       if (prev && srng.bool(0.35)) keyRoot = (keyRoot + srng.pick([5, 7, 9, 2, 3, 10])) % 12;
       const mode = pickMode(srng, mood, style, prev && prev.mode);
 
-      const tempo = clamp(tempoBase + mood.tempoDelta + srng.int(-1, 1), style.tempo[0] - 6, style.tempo[1] + 6);
+      const tempo = clamp(tempoBase + mood.tempoDelta + (dp ? dp.tempo : 0) + srng.int(-1, 1), style.tempo[0] - 8, style.tempo[1] + 8);
       const intensity = clamp(mood.intensity + srng.gauss(0, 0.05), 0.05, 1);
-      const brightness = clamp(mood.brightness + srng.gauss(0, 0.08), 0.05, 1);
+      const brightness = clamp(mood.brightness + (dp ? dp.brightness : 0) + srng.gauss(0, 0.08), 0.05, 1);
       const progression = srng.pick(style.progressions);
       const chordSize = srng.pick(style.chordSizes);
       const drumLevel = mood.drums;
@@ -293,10 +314,18 @@
           vinyl: 1,
         },
       });
+      if (dp) {
+        const amb = sections[i].ambience;
+        for (const id in dp.ambience) if (amb[id] != null) amb[id] *= dp.ambience[id];
+      }
       prev = sections[i];
     }
 
-    return { seed, style: styleId, styleName: style.name, duration, sections, keyRoot: keyRootBase, tempo: tempoBase, lofi: style.lofi };
+    return {
+      seed, style: styleId, styleName: style.name, duration, sections,
+      keyRoot: keyRootBase, tempo: tempoBase, lofi: style.lofi,
+      daypart, daypartName: dp ? dp.label : null,
+    };
   };
 
   /** Section containing piece time p (seconds, wrapped into [0, duration)). */

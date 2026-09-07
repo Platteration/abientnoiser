@@ -37,6 +37,12 @@
         <div class="segments" id="segments"></div>
         <div class="playhead" id="playhead"></div>
       </div>
+      <div class="steer">
+        <button id="calmer" type="button" class="ghost sm" title="Jump to a calmer movement">↓ Calmer</button>
+        <button id="lift" type="button" class="ghost sm" title="Jump to a brighter movement">↑ Lift</button>
+        <button id="skip" type="button" class="ghost sm" title="Next movement (N)">↦ Skip</button>
+        <button id="lock" type="button" class="ghost sm" title="Repeat this movement">🔓 Lock</button>
+      </div>
       <details class="movements">
         <summary><span id="planSummary"></span><span class="chev">movements</span></summary>
         <ol id="sectionList"></ol>
@@ -58,6 +64,8 @@
         <label class="field"><span>Mood changes every</span><select id="sectionMin"></select></label>
         <label class="field"><span>Volume</span><input id="volume" type="range" min="0" max="100" value="80"></label>
         <label class="field"><span>Sleep timer <small id="sleepStatus"></small></span><select id="sleep"></select></label>
+        <label class="field"><span>Time of day</span><select id="daypart"></select></label>
+        <label class="field"><span>Focus timer <small id="pomoStatus"></small></span><select id="pomodoro"></select></label>
       </div>
     </section>
 

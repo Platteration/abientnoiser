@@ -24,6 +24,7 @@
     return {
       seed: String(s.seed || AN.randomSeed()).slice(0, 64),
       style,
+      daypart: AN.DAYPARTS[s.daypart] ? s.daypart : (s.daypart === 'auto' ? 'auto' : null),
       durationMin: Math.min(240, Math.max(5, Number(s.durationMin) || 60)),
       sectionMin: Math.min(15, Math.max(1, Number(s.sectionMin) || 4)),
       levels,

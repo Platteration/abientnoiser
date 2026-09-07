@@ -8,6 +8,9 @@
 
   const state = { settings: null, plan: null, engine: null, recorder: null, sleepAt: null, wavBusy: false, lastSectionIdx: -1 };
   const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
+  const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
+  const POMODOROS = [[0, 'Off'], [25, '25 + 5 min'], [50, '50 + 10 min'], [90, '90 + 20 min']];
+  const BREAK_DUCK = { drums: 0.12, melody: 0.3, arp: 0.2, bass: 0.55, pads: 0.85 };
 
   // ---------- init ----------
   function init() {
@@ -21,6 +24,8 @@
     buildSelect($('duration'), DURATIONS, (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS, (v) => `${v} min`, state.settings.sectionMin);
     buildSelect($('sleep'), [0, 25, 45, 60, 90, 120], (v) => (v ? `${v} min` : 'Off'), 0);
+    buildSelect($('daypart'), DAYPARTS.map((d) => d[0]), (v) => DAYPARTS.find((d) => d[0] === v)[1], state.settings.daypart || '');
+    buildSelect($('pomodoro'), POMODOROS.map((p) => p[0]), (v) => POMODOROS.find((p) => Number(p[0]) === Number(v))[1], 0);
     buildSelect($('wavMinutes'), [1, 2, 3, 5, 10], (v) => `${v} min`, 3);
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
@@ -169,6 +174,75 @@
     seekTo(target.start);
   }
 
+  // ---------- steering ----------
+  /** Jump to the nearest movement that is calmer (dir < 0) or brighter (dir > 0). */
+  function steer(dir) {
+    const engine = ensureEngine();
+    if (!engine) return;
+    const cur = AN.sectionAt(state.plan, engine.transport.now());
+    const list = state.plan.sections;
+    for (let k = 1; k <= list.length; k++) {
+      const s = list[(cur.index + k) % list.length];
+      const better = dir < 0 ? s.intensity < cur.intensity - 0.08 : s.intensity > cur.intensity + 0.08;
+      if (better) {
+        if (engine.transport.lock != null) setLock(false);
+        seekTo(s.start);
+        return toast(`${dir < 0 ? 'Calmer' : 'Lifting'}: ${s.name}`);
+      }
+    }
+    toast(`Nothing ${dir < 0 ? 'calmer' : 'brighter'} in this piece — try a new seed`);
+  }
+
+  function setLock(on) {
+    const engine = ensureEngine();
+    if (!engine) return;
+    const t = engine.transport;
+    const cur = AN.sectionAt(state.plan, t.now());
+    t.setLock(on ? cur.index : null);
+    $('lock').classList.toggle('active', on);
+    $('lock').textContent = on ? '🔒 Locked' : '🔓 Lock';
+    if (on) toast(`Repeating “${cur.name}”`);
+  }
+
+  // ---------- focus timer ----------
+  function setPomodoro(minutes) {
+    const engine = state.engine;
+    if (!minutes) {
+      state.pomo = null;
+      $('pomoStatus').textContent = '';
+      document.body.classList.remove('pomo-break');
+      if (engine) engine.setDuck({}, engine.ctx.currentTime);
+      return;
+    }
+    const conf = { 25: 5, 50: 10, 90: 20 }[minutes] || Math.round(minutes / 5);
+    state.pomo = { work: minutes * 60, brk: conf * 60, phase: 'work', endsAt: Date.now() + minutes * 60000, cycles: 0 };
+    document.body.classList.remove('pomo-break');
+    if (engine) engine.setDuck({}, engine.ctx.currentTime);
+    toast(`Focus timer: ${minutes} min of work, then ${conf}`);
+  }
+
+  function tickPomodoro() {
+    const p = state.pomo;
+    if (!p) return;
+    const engine = state.engine;
+    const playing = !!(engine && engine.transport.playing);
+    const left = (p.endsAt - Date.now()) / 1000;
+    if (left <= 0) {
+      const toBreak = p.phase === 'work';
+      p.phase = toBreak ? 'break' : 'work';
+      if (!toBreak) p.cycles++;
+      p.endsAt = Date.now() + (toBreak ? p.brk : p.work) * 1000;
+      document.body.classList.toggle('pomo-break', toBreak);
+      if (engine) {
+        engine.setDuck(toBreak ? BREAK_DUCK : {}, engine.ctx.currentTime);
+        if (playing) engine.chime(!toBreak);
+      }
+      toast(toBreak ? 'Break — the music steps back' : 'Back to work');
+    }
+    const label = p.phase === 'work' ? 'Work' : 'Break';
+    $('pomoStatus').textContent = `${label} ${AN.formatTime(Math.max(0, (p.endsAt - Date.now()) / 1000))}${p.cycles ? ` · ${p.cycles} done` : ''}`;
+  }
+
   // ---------- settings changes ----------
   function autosave() { AN.storage.autosave(state.settings); }
 
@@ -184,6 +258,9 @@
   function recompose() {
     state.plan = AN.compose(state.settings);
     if (state.engine) {
+      state.engine.transport.setLock(null);
+      $('lock').classList.remove('active');
+      $('lock').textContent = '🔓 Lock';
       state.engine.applyLevels(state.settings.levels, state.engine.ctx.currentTime);
       state.engine.setPlan(state.plan, state.settings);
     }
@@ -196,6 +273,7 @@
     state.settings = AN.storage.cleanSettings(s);
     $('seed').value = state.settings.seed;
     $('volume').value = Math.round(state.settings.volume * 100);
+    $('daypart').value = state.settings.daypart || '';
     buildSelect($('duration'), DURATIONS.includes(state.settings.durationMin) ? DURATIONS : DURATIONS.concat([state.settings.durationMin]).sort((a, b) => a - b), (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS.includes(state.settings.sectionMin) ? SECTION_MINS : SECTION_MINS.concat([state.settings.sectionMin]).sort((a, b) => a - b), (v) => `${v} min`, state.settings.sectionMin);
     refreshMixer();
@@ -255,7 +333,7 @@
       seg.appendChild(d);
     }
     $('total').textContent = AN.formatTime(plan.duration);
-    $('planSummary').textContent = `${plan.sections.length} movements · ${plan.styleName} · key of ${AN.theory.keyName(plan.keyRoot)} · ~${plan.tempo} bpm`;
+    $('planSummary').textContent = `${plan.sections.length} movements · ${plan.styleName} · key of ${AN.theory.keyName(plan.keyRoot)} · ~${plan.tempo} bpm${plan.daypartName ? ` · ${plan.daypartName.toLowerCase()}` : ''}`;
     const list = $('sectionList');
     list.innerHTML = '';
     for (const s of plan.sections) {
@@ -300,6 +378,7 @@
     if (state.recorder && state.recorder.recording) {
       $('recStatus').textContent = `Recording… ${AN.formatTime(state.recorder.elapsed)}`;
     }
+    tickPomodoro();
     if (state.sleepAt && engine && engine.transport.playing) {
       const left = (state.sleepAt - Date.now()) / 1000;
       $('sleepStatus').textContent = `Stops in ${AN.formatTime(Math.max(0, left))}`;
@@ -414,6 +493,17 @@
       if (state.engine) state.engine.setVolume(state.settings.volume, state.engine.ctx.currentTime);
       autosave();
     });
+    $('calmer').addEventListener('click', () => steer(-1));
+    $('lift').addEventListener('click', () => steer(1));
+    $('skip').addEventListener('click', () => jumpMovement(1));
+    $('lock').addEventListener('click', () => setLock(!$('lock').classList.contains('active')));
+    $('daypart').addEventListener('change', () => {
+      state.settings.daypart = $('daypart').value || null;
+      recompose();
+      const name = state.plan.daypartName;
+      toast(name ? `Coloured for ${name.toLowerCase()}` : 'Time of day off');
+    });
+    $('pomodoro').addEventListener('change', () => setPomodoro(Number($('pomodoro').value)));
     $('sleep').addEventListener('change', () => {
       const min = Number($('sleep').value);
       state.sleepAt = min ? Date.now() + min * 60000 : null;
@@ -460,6 +550,6 @@
     window.addEventListener('beforeunload', autosave);
   }
 
-  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement };
+  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro };
   document.addEventListener('DOMContentLoaded', init);
 })();

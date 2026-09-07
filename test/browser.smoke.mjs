@@ -137,6 +137,59 @@ try {
   const lofi = await page.evaluate(() => ({ style: AmbientNoiser.state.plan.style, playing: AmbientNoiser.state.engine.transport.playing, pos: AmbientNoiser.state.engine.transport.now() }));
   check(lofi.style === 'lofi' && lofi.playing && lofi.pos > 0.5, `style switch while playing restarts (pos ${lofi.pos.toFixed(2)}s)`);
 
+  // steering: calmer / lift / lock
+  await page.evaluate(() => AmbientNoiser.state.engine.transport.seek(0));
+  const steered = await page.evaluate(async () => {
+    const before = AN.sectionAt(AmbientNoiser.state.plan, AmbientNoiser.state.engine.transport.now());
+    AmbientNoiser.steer(1);
+    const up = AN.sectionAt(AmbientNoiser.state.plan, AmbientNoiser.state.engine.transport.now());
+    AmbientNoiser.steer(-1);
+    const down = AN.sectionAt(AmbientNoiser.state.plan, AmbientNoiser.state.engine.transport.now());
+    return { before: before.intensity, up: up.intensity, down: down.intensity };
+  });
+  check(steered.up > steered.before && steered.down < steered.up, `steering moves between movements (${steered.before.toFixed(2)} -> ${steered.up.toFixed(2)} -> ${steered.down.toFixed(2)})`);
+
+  const locked = await page.evaluate(async () => {
+    const t = AmbientNoiser.state.engine.transport;
+    const sec = AN.sectionAt(AmbientNoiser.state.plan, t.now());
+    t.seek(sec.end - 1.5);
+    AmbientNoiser.setLock(true);
+    await new Promise((r) => setTimeout(r, 3000));
+    const now = t.now();
+    const at = AN.sectionAt(AmbientNoiser.state.plan, now);
+    AmbientNoiser.setLock(false);
+    return { lockedIndex: sec.index, nowIndex: at.index, loops: t.loops };
+  });
+  check(locked.nowIndex === locked.lockedIndex, `lock repeats one movement (still in movement ${locked.nowIndex + 1})`);
+
+  // focus timer ducks the mix on a break and restores it after
+  const pomo = await page.evaluate(async () => {
+    const e = AmbientNoiser.state.engine;
+    AmbientNoiser.setPomodoro(25);
+    const before = e.graph.layers.drums.user.gain.value;
+    AmbientNoiser.state.pomo.endsAt = Date.now() - 1;
+    await new Promise((r) => setTimeout(r, 400));
+    const onBreak = e.duck.drums;
+    AmbientNoiser.state.pomo.endsAt = Date.now() - 1;
+    await new Promise((r) => setTimeout(r, 400));
+    const back = Object.keys(e.duck).length;
+    AmbientNoiser.setPomodoro(0);
+    return { before, onBreak, back, phase: AmbientNoiser.state.pomo === null };
+  });
+  check(pomo.onBreak > 0 && pomo.onBreak < 1 && pomo.back === 0, `focus timer ducks on a break (drums x${pomo.onBreak}) and restores after`);
+
+  // time of day changes the plan
+  const daypart = await page.evaluate(() => {
+    const base = { seed: 'clock', style: 'ambient', durationMin: 40, sectionMin: 4 };
+    const off = AN.compose(base).sections.map((s) => s.moodId).join(',');
+    const night = AN.compose(Object.assign({}, base, { daypart: 'night' }));
+    const morning = AN.compose(Object.assign({}, base, { daypart: 'morning' }));
+    return { off, night: night.sections.map((s) => s.moodId).join(','), label: night.daypartName,
+      nightBirds: night.sections[0].ambience.birds, morningBirds: morning.sections[0].ambience.birds };
+  });
+  check(daypart.off !== daypart.night && daypart.label === 'Night' && daypart.nightBirds < daypart.morningBirds,
+    `time of day recolours the plan (night birds ${daypart.nightBirds.toFixed(2)} < morning ${daypart.morningBirds.toFixed(2)})`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

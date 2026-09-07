@@ -16,8 +16,10 @@
       this.graph = new AN.Graph(ctx, { volume: settings.volume });
       for (const l of AN.MUSIC_LAYERS) this.graph.layer(l.id, 'music', SENDS[l.id]);
       this.graph.layer('drone', 'music', SENDS.drone);
+      this.graph.layer('ui', 'music', 0.4); // timer chimes, always audible
       this.textures = AN.ambience.create(this.graph);
       this.levels = Object.assign({}, settings.levels);
+      this.duck = {};        // layer -> temporary multiplier (breaks, focus modes)
       this.section = null;
       this.mel = { note: null };
       this.transport = new Transport(this);
@@ -26,18 +28,30 @@
 
     get isOffline() { return typeof this.ctx.startRendering === 'function'; }
 
+    /** Effective level for a layer: mixer setting times any temporary duck. */
+    levelOf(id) {
+      const v = this.levels[id] == null ? 0 : this.levels[id];
+      return v * (this.duck[id] == null ? 1 : this.duck[id]);
+    }
+
+    /** Temporarily scale layers without touching the user's mixer (breaks, focus modes). */
+    setDuck(map, t) {
+      this.duck = Object.assign({}, map);
+      this.applyLevels({}, t);
+    }
+
     /** Mixer levels from the UI. */
     applyLevels(levels, t, initial = false) {
       const g = this.graph;
       Object.assign(this.levels, levels);
       for (const l of AN.MUSIC_LAYERS) {
-        const v = this.levels[l.id] == null ? 0 : this.levels[l.id];
+        const v = this.levelOf(l.id);
         if (initial) g.layers[l.id].user.gain.value = v; else g.setUserLevel(l.id, v, t);
       }
-      const pads = this.levels.pads == null ? 0 : this.levels.pads;
+      const pads = this.levelOf('pads');
       if (initial) g.layers.drone.user.gain.value = pads; else g.setUserLevel('drone', pads, t);
       for (const l of AN.AMBIENCE_LAYERS) {
-        const v = this.levels[l.id] == null ? 0 : this.levels[l.id];
+        const v = this.levelOf(l.id);
         const tex = this.textures[l.id];
         if (initial) tex.layer.user.gain.value = v; else g.setUserLevel(l.id, v, t);
         if (!initial && this.transport.playing) {
@@ -48,6 +62,13 @@
     }
 
     setVolume(v, t) { this.settings.volume = v; this.graph.setVolume(v, t); }
+
+    /** A short three-note chime, independent of the mixer (used by the focus timer). */
+    chime(rising = true) {
+      const t = this.ctx.currentTime + 0.05;
+      const notes = rising ? [72, 76, 79] : [79, 76, 72];
+      notes.forEach((m, i) => S.bell(this.graph, this.graph.layers.ui, { midi: m, t: t + i * 0.17, vel: 0.45, pan: 0 }));
+    }
 
     /** Swap in a new plan (new seed/style/length) and restart from the top. */
     setPlan(plan, settings) {
@@ -285,15 +306,18 @@
       this.section = null;
       this.loops = 0;
       this.gen = 0;
+      this.lock = null;      // index of a movement to repeat instead of moving on
       this.onLoop = null;
     }
 
     get duration() { return this.plan.duration; }
     wrap(p) { const d = this.duration; return ((p % d) + d) % d; }
 
-    /** Current piece position in seconds. */
+    /** Current piece position in seconds. A seek schedules its first step a moment
+     *  ahead of the clock, so report the target position until playback reaches it. */
     now() {
       if (!this.playing) return this.position;
+      if (this.enterAt != null && this.ctx.currentTime < this.enterAt) return this.wrap(this.enterPos);
       return this.wrap(this.ctx.currentTime - this.baseCtx);
     }
 
@@ -332,6 +356,16 @@
       }, 350);
     }
 
+    /** Repeat one movement forever (null clears). */
+    setLock(index) {
+      this.lock = index;
+      if (index != null && this.playing) {
+        const s = this.plan.sections[index];
+        const now = this.now();
+        if (now < s.start || now >= s.end) this.seek(s.start);
+      }
+    }
+
     seek(pos) {
       const was = this.playing;
       if (was) {
@@ -352,6 +386,8 @@
     toggle() { this.playing ? this.pause() : this.play(); }
 
     _enter(pos, ctxTime, fromSeek) {
+      this.enterAt = ctxTime;
+      this.enterPos = pos;
       const section = AN.sectionAt(this.plan, pos);
       const stepLen = 60 / section.tempo / 4;
       this.baseCtx = ctxTime - pos;
@@ -375,6 +411,14 @@
 
     step() {
       let p = this.cursor - this.baseCtx;
+      if (this.lock != null) { // repeat one movement: rewind piece time by its length
+        const ls = this.plan.sections[this.lock];
+        if (ls && p >= ls.end - 1e-6) {
+          this.baseCtx += ls.length;
+          p -= ls.length;
+          this.section = null;
+        }
+      }
       if (p >= this.duration - 1e-6) { // loop seam
         this.baseCtx += this.duration;
         p -= this.duration;
