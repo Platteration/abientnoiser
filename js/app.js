@@ -7,6 +7,7 @@
   const SECTION_MINS = [2, 3, 4, 5, 6, 8];
 
   const state = { settings: null, plan: null, engine: null, recorder: null, sleepAt: null, wavBusy: false, lastSectionIdx: -1 };
+  const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
 
   // ---------- init ----------
   function init() {
@@ -15,6 +16,7 @@
     if (fromUrl) history.replaceState(null, '', location.pathname);
     state.plan = AN.compose(state.settings);
 
+    initTheme();
     buildStyles();
     buildSelect($('duration'), DURATIONS, (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS, (v) => `${v} min`, state.settings.sectionMin);
@@ -28,6 +30,7 @@
     renderPlan();
     renderLibrary();
     bind();
+    if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
     requestAnimationFrame(tick);
   }
@@ -93,6 +96,79 @@
     document.querySelectorAll('.style').forEach((b) => b.classList.toggle('active', b.dataset.style === state.settings.style));
   }
 
+  // ---------- theme ----------
+  function initTheme() {
+    buildSelect($('theme'), THEMES.map((t) => t[0]), (v) => THEMES.find((t) => t[0] === v)[1], AN.storage.prefs().theme || 'system');
+    applyTheme();
+    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
+    if (mq && mq.addEventListener) mq.addEventListener('change', applyTheme);
+  }
+
+  function applyTheme() {
+    const choice = $('theme').value || 'system';
+    let theme = choice;
+    if (choice === 'system') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.dataset.theme = theme;
+    AN.storage.setPref('theme', choice);
+  }
+
+  // ---------- quiet mode ----------
+  function setQuiet(on) {
+    document.body.classList.toggle('quiet', on);
+    AN.storage.setPref('quiet', on);
+    $('quiet').textContent = on ? 'Exit quiet mode' : 'Quiet mode';
+  }
+
+  // ---------- media session ----------
+  function updateMediaSession(section) {
+    if (!('mediaSession' in navigator)) return;
+    const plan = state.plan;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: section.name,
+        artist: `${plan.styleName} · ${section.keyName} ${section.mode}`,
+        album: `Ambient Noiser · seed ${plan.seed}`,
+      });
+    } catch (e) { /* MediaMetadata unavailable */ }
+    if (!state.mediaBound) {
+      state.mediaBound = true;
+      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) { /* unsupported action */ } };
+      set('play', () => { if (!state.engine || !state.engine.transport.playing) togglePlay(); });
+      set('pause', () => { if (state.engine && state.engine.transport.playing) togglePlay(); });
+      set('seekbackward', (d) => nudge(-(d && d.seekOffset ? d.seekOffset : 30)));
+      set('seekforward', (d) => nudge(d && d.seekOffset ? d.seekOffset : 30));
+      set('seekto', (d) => { if (d && d.seekTime != null) seekTo(d.seekTime); });
+      set('previoustrack', () => jumpMovement(-1));
+      set('nexttrack', () => jumpMovement(1));
+    }
+    if (navigator.mediaSession.setPositionState) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: plan.duration,
+          position: Math.min(plan.duration, Math.max(0, state.engine ? state.engine.transport.now() : 0)),
+          playbackRate: 1,
+        });
+      } catch (e) { /* position state rejected */ }
+    }
+    navigator.mediaSession.playbackState = state.engine && state.engine.transport.playing ? 'playing' : 'paused';
+  }
+
+  function nudge(delta) { if (state.engine) seekTo(state.engine.transport.now() + delta); }
+
+  /** Jump to the previous / next movement (previous restarts the current one first). */
+  function jumpMovement(dir) {
+    const engine = ensureEngine();
+    if (!engine) return;
+    const pos = engine.transport.now();
+    const cur = AN.sectionAt(state.plan, pos);
+    if (dir < 0 && pos - cur.start > 4) return seekTo(cur.start);
+    const n = state.plan.sections.length;
+    const target = state.plan.sections[((cur.index + dir) % n + n) % n];
+    seekTo(target.start);
+  }
+
   // ---------- settings changes ----------
   function autosave() { AN.storage.autosave(state.settings); }
 
@@ -150,6 +226,7 @@
 
   function updatePlayButton() {
     const playing = !!(state.engine && state.engine.transport.playing);
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
     $('play').textContent = playing ? '❚❚' : '▶';
     $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
     $('play').classList.toggle('playing', playing);
@@ -204,6 +281,9 @@
     $('nextMood').textContent = playing ? `Next: ${next.name} in ${AN.formatTime(remaining)}` : 'Press play — or pick a movement below';
     if (force || s.index !== state.lastSectionIdx) {
       state.lastSectionIdx = s.index;
+      document.documentElement.style.setProperty('--mood-hue', s.hue);
+      document.documentElement.style.setProperty('--mood-strength', `${8 + s.intensity * 16}%`);
+      updateMediaSession(s);
       $('moodName').textContent = s.name;
       $('moodTag').textContent = s.moodId;
       $('moodTag').style.background = `hsl(${s.hue} 45% 40%)`;
@@ -322,6 +402,9 @@
 
   function bind() {
     $('play').addEventListener('click', togglePlay);
+    $('theme').addEventListener('change', applyTheme);
+    $('quiet').addEventListener('click', () => setQuiet(!document.body.classList.contains('quiet')));
+    $('quietExit').addEventListener('click', () => setQuiet(false));
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });
@@ -367,12 +450,16 @@
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button' && e.key !== ' ') return;
       if (e.key === ' ' && tag !== 'button') { e.preventDefault(); togglePlay(); }
-      else if (e.key === 'ArrowRight' && state.engine) { seekTo(state.engine.transport.now() + 30); }
-      else if (e.key === 'ArrowLeft' && state.engine) { seekTo(state.engine.transport.now() - 30); }
+      else if (e.key === 'ArrowRight') nudge(30);
+      else if (e.key === 'ArrowLeft') nudge(-30);
+      else if (e.key === 'q' || e.key === 'Q') setQuiet(!document.body.classList.contains('quiet'));
+      else if (e.key === 'Escape' && document.body.classList.contains('quiet')) setQuiet(false);
+      else if (e.key === 'n' || e.key === 'N') jumpMovement(1);
+      else if (e.key === 'p' || e.key === 'P') jumpMovement(-1);
     });
     window.addEventListener('beforeunload', autosave);
   }
 
-  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings };
+  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement };
   document.addEventListener('DOMContentLoaded', init);
 })();

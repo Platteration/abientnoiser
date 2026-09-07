@@ -3,6 +3,7 @@
   const AN = root.AN = root.AN || {};
   const KEY = 'ambientnoiser.mixes.v1';
   const AUTO = 'ambientnoiser.autosave.v1';
+  const PREFS = 'ambientnoiser.prefs.v1';
 
   function read(key, fallback) {
     try { const raw = root.localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; }
@@ -61,6 +62,8 @@
       return added;
     },
     autosave(settings) { write(AUTO, cleanSettings(settings)); },
+    prefs() { const p = read(PREFS, {}); return (p && typeof p === 'object') ? p : {}; },
+    setPref(key, value) { const p = this.prefs(); p[key] = value; write(PREFS, p); },
     loadAutosave() { const s = read(AUTO, null); return s ? cleanSettings(s) : null; },
     encodeShare(settings) {
       const s = cleanSettings(settings);

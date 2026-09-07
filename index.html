@@ -15,10 +15,15 @@
       <h1><span class="logo" aria-hidden="true"></span>Ambient Noiser</h1>
       <p>Hour-long looping soundscapes that shift mood every few minutes — ambient, lo-fi hip hop, focus music, rain and more. Generated live in your browser, nothing is uploaded.</p>
     </div>
+    <div class="toolbar">
+      <label class="mini"><span>Theme</span><select id="theme"></select></label>
+      <button id="quiet" type="button" class="ghost sm" title="Hide everything but the player (Q)">Quiet mode</button>
+    </div>
   </header>
 
   <main class="layout">
     <section class="card player" aria-label="Player">
+      <button id="quietExit" type="button" class="quiet-exit ghost sm" title="Back to the full app (Esc)">✕ Exit quiet mode</button>
       <div class="now">
         <button id="play" class="play" type="button" aria-label="Play">▶</button>
         <div class="now-text">
@@ -97,6 +102,7 @@
   <footer>
     <span><kbd>Space</kbd> play / pause</span>
     <span><kbd>←</kbd> <kbd>→</kbd> skip 30 s</span>
+    <span><kbd>Q</kbd> quiet mode</span>
     <span>Everything runs locally with the Web Audio API. Loops are seamless: the last movement settles back into the first.</span>
   </footer>
 
