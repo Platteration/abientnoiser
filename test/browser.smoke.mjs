@@ -216,6 +216,55 @@ try {
   });
   check(visOff, 'visualiser can be turned off');
 
+  // chunked WAV export: correct header, exact length, and no clicks at the joins
+  const wav = await page.evaluate(async () => {
+    const s = AN.defaultSettings('lofi');
+    s.seed = 'export'; s.durationMin = 10; s.levels.rain = 0.3;
+    const sampleRate = 16000, seconds = 120, chunkSeconds = 40;
+    const progress = [];
+    const blob = await AN.renderWav(s, seconds, {
+      sampleRate, chunkSeconds, preroll: 10, onProgress: (f, done) => progress.push([f, done]),
+    });
+    const ab = await blob.arrayBuffer();
+    const v = new DataView(ab);
+    const tag = (o) => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+    const header = {
+      riff: tag(0), wave: tag(8), fmt: tag(12), data: tag(36),
+      channels: v.getUint16(22, true), rate: v.getUint32(24, true), bits: v.getUint16(34, true),
+      dataBytes: v.getUint32(40, true), riffSize: v.getUint32(4, true), size: ab.byteLength,
+    };
+
+    // decode and look for discontinuities at the chunk joins
+    const ctx = new OfflineAudioContext(1, 1, sampleRate);
+    const buf = await ctx.decodeAudioData(ab.slice(0));
+    const d = buf.getChannelData(0);
+    const rms = (from, to) => {
+      let sum = 0, n = 0;
+      for (let i = Math.max(0, Math.floor(from * sampleRate)); i < Math.min(d.length, Math.floor(to * sampleRate)); i++) { sum += d[i] * d[i]; n++; }
+      return n ? Math.sqrt(sum / n) : 0;
+    };
+    let globalStep = 0;
+    for (let i = 1; i < d.length; i++) globalStep = Math.max(globalStep, Math.abs(d[i] - d[i - 1]));
+    const seams = [];
+    for (let t = chunkSeconds; t < seconds; t += chunkSeconds) {
+      let step = 0;
+      const c = Math.floor(t * sampleRate);
+      for (let i = c - 40; i < c + 40; i++) if (i > 0) step = Math.max(step, Math.abs(d[i] - d[i - 1]));
+      seams.push({ t, before: rms(t - 0.6, t), after: rms(t, t + 0.6), step });
+    }
+    return { header, frames: buf.length, seconds: buf.duration, globalStep, seams, chunks: progress.length };
+  });
+  const h = wav.header;
+  const headerOk = h.riff === 'RIFF' && h.wave === 'WAVE' && h.fmt === 'fmt ' && h.data === 'data'
+    && h.channels === 2 && h.rate === 16000 && h.bits === 16
+    && h.dataBytes === 120 * 16000 * 2 * 2 && h.riffSize === h.size - 8;
+  check(headerOk, `export writes a valid 2 ch / 16 kHz / 16-bit WAV header (${(h.size / 1048576).toFixed(1)} MB, ${h.dataBytes} data bytes)`);
+  check(Math.abs(wav.seconds - 120) < 0.01 && wav.chunks === 3, `export is exactly ${wav.seconds.toFixed(2)} s from ${wav.chunks} chunks`);
+  const seamOk = wav.seams.every((s) => s.before > 0.002 && s.after > 0.002
+    && s.after / s.before < 6 && s.before / s.after < 6
+    && s.step <= wav.globalStep * 1.05);
+  check(seamOk, `chunk joins are continuous (${wav.seams.map((s) => `${s.t}s ${s.before.toFixed(3)}->${s.after.toFixed(3)}`).join(', ')})`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

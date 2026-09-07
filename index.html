@@ -105,9 +105,11 @@
       <div class="inline wrap">
         <select id="wavMinutes"></select>
         <button id="wav" type="button" class="ghost">Export WAV</button>
+        <button id="wavCancel" type="button" class="ghost sm" hidden>Cancel</button>
+        <progress id="wavProgress" max="1" value="0" hidden></progress>
         <span class="status" id="wavStatus"></span>
       </div>
-      <p class="hint">Export WAV renders the start of the loop offline, faster than real time, as an uncompressed file (about 10 MB per minute).</p>
+      <p class="hint">Export WAV renders the loop offline, faster than real time, as an uncompressed file. Long exports render in five-minute chunks so even a full hour fits in memory.</p>
     </section>
   </main>
 

@@ -220,3 +220,6 @@ body.quiet .steer:hover { opacity: 1; }
 .player > *:not(.visual) { position: relative; z-index: 1; }
 body.quiet .player { overflow: visible; }
 body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; }
+
+/* export progress */
+#wavProgress { width: 140px; height: 8px; accent-color: var(--accent); }

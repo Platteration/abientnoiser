@@ -450,10 +450,12 @@
       this.cursor += stepLen;
     }
 
-    /** Offline: schedule the first `seconds` of the piece from position 0. */
-    renderRange(seconds) {
+    /** Offline: schedule `seconds` of the piece starting at piece position `from`.
+     *  Context time 0 corresponds to `from`, so a caller rendering a later chunk
+     *  can ask for a lead-in and then discard it. */
+    renderRange(seconds, from = 0) {
       this.playing = true;
-      this._enter(0, 0, true);
+      this._enter(this.wrap(from), 0, true);
       this.engine.startTextures(0);
       this.scheduleUntil(seconds + 0.5);
       this.playing = false;

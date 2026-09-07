@@ -29,7 +29,7 @@
     buildSelect($('sleep'), [0, 25, 45, 60, 90, 120], (v) => (v ? `${v} min` : 'Off'), 0);
     buildSelect($('daypart'), DAYPARTS.map((d) => d[0]), (v) => DAYPARTS.find((d) => d[0] === v)[1], state.settings.daypart || '');
     buildSelect($('pomodoro'), POMODOROS.map((p) => p[0]), (v) => POMODOROS.find((p) => Number(p[0]) === Number(v))[1], 0);
-    buildSelect($('wavMinutes'), [1, 2, 3, 5, 10], (v) => `${v} min`, 3);
+    buildWavLengths();
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
     $('seed').value = state.settings.seed;
@@ -41,6 +41,16 @@
     if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
     requestAnimationFrame(tick);
+  }
+
+  /** Export lengths, capped at the loop length, plus the whole loop. */
+  function buildWavLengths() {
+    const total = state.settings.durationMin;
+    const opts = [1, 3, 5, 10, 20, 30, 45, 60, 90, 120].filter((m) => m < total);
+    opts.push(total);
+    const current = Number($('wavMinutes').value) || 3;
+    buildSelect($('wavMinutes'), opts, (v) => (v === total ? `Whole loop (${v} min, ~${Math.round(v * 10.1)} MB)` : `${v} min`),
+      opts.includes(current) ? current : opts[Math.min(1, opts.length - 1)]);
   }
 
   function buildSelect(sel, values, label, current) {
@@ -289,6 +299,7 @@
     }
     state.lastSectionIdx = -1;
     renderPlan();
+    buildWavLengths();
     autosave();
   }
 
@@ -478,18 +489,33 @@
     if (state.wavBusy) return;
     const minutes = Number($('wavMinutes').value) || 3;
     state.wavBusy = true;
+    state.wavCancel = false;
     $('wav').disabled = true;
+    $('wavCancel').hidden = false;
+    $('wavProgress').hidden = false;
+    $('wavProgress').value = 0;
     $('wavStatus').textContent = `Rendering ${minutes} min…`;
     const started = performance.now();
     try {
-      const blob = await AN.renderWav(state.settings, minutes * 60);
+      const blob = await AN.renderWav(state.settings, minutes * 60, {
+        shouldCancel: () => state.wavCancel,
+        onProgress: (fraction, done) => {
+          $('wavProgress').value = fraction;
+          const elapsed = (performance.now() - started) / 1000;
+          const left = fraction > 0 ? elapsed / fraction - elapsed : 0;
+          $('wavStatus').textContent = `Rendered ${AN.formatTime(done)} of ${minutes}:00${left > 2 ? ` · about ${AN.formatTime(left)} left` : ''}`;
+        },
+      });
       AN.download(blob, `${fileStem()}-${minutes}min.wav`);
       $('wavStatus').textContent = `Done in ${((performance.now() - started) / 1000).toFixed(0)} s · ${(blob.size / 1048576).toFixed(0)} MB`;
     } catch (e) {
-      $('wavStatus').textContent = `Failed: ${e.message}`;
+      $('wavStatus').textContent = e.message === 'cancelled' ? 'Export cancelled' : `Failed: ${e.message}`;
     } finally {
       state.wavBusy = false;
+      state.wavCancel = false;
       $('wav').disabled = false;
+      $('wavCancel').hidden = true;
+      $('wavProgress').hidden = true;
     }
   }
 
@@ -512,6 +538,7 @@
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });
+    $('wavMinutes').addEventListener('change', () => { /* length chosen; nothing to do until export */ });
     $('sectionMin').addEventListener('change', () => { state.settings.sectionMin = Number($('sectionMin').value); recompose(); });
     $('volume').addEventListener('input', () => {
       state.settings.volume = Number($('volume').value) / 100;
@@ -560,6 +587,7 @@
     });
     $('record').addEventListener('click', toggleRecord);
     $('wav').addEventListener('click', exportWav);
+    $('wavCancel').addEventListener('click', () => { state.wavCancel = true; $('wavStatus').textContent = 'Cancelling…'; });
 
     document.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
