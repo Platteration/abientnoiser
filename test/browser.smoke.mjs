@@ -13,7 +13,9 @@ try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require(path.join(process.env.NODE_GLOBAL_MODULES || '/opt/node22/lib/node_modules', 'playwright'))); }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const port = 5199;
+// a fresh port each run: a lingering server from a previous run would
+// otherwise keep answering until its shutdown lands, mid-run
+const port = 5200 + Math.floor(Math.random() * 300);
 // keep the static server's output: if it dies mid-run every later navigation
 // fails with a bare connection error, which is otherwise a mystery
 const server = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], {
@@ -24,7 +26,17 @@ let serverGone = null;
 server.stdout.on('data', (d) => { serverLog += d; });
 server.stderr.on('data', (d) => { serverLog += d; });
 server.on('exit', (code, signal) => { serverGone = `static server exited early (code ${code}, signal ${signal})`; });
-await new Promise((r) => setTimeout(r, 500));
+// wait for it to actually answer rather than guessing at a delay
+let ready = false;
+for (let i = 0; i < 60 && !ready && !serverGone; i++) {
+  try { ready = (await fetch(`http://localhost:${port}/index.html`)).ok; } catch { /* not up yet */ }
+  if (!ready) await new Promise((r) => setTimeout(r, 100));
+}
+if (!ready) {
+  console.error(`static server never came up on port ${port}\n${serverLog}`);
+  server.kill();
+  process.exit(1);
+}
 
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failures++; };
