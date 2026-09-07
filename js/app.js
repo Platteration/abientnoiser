@@ -288,14 +288,15 @@
     recompose();
   }
 
-  function recompose() {
+  function recompose(opts = {}) {
+    const keepAt = opts.keep && state.engine ? state.engine.transport.now() : 0;
     state.plan = AN.compose(state.settings);
     if (state.engine) {
       state.engine.transport.setLock(null);
       $('lock').classList.remove('active');
       $('lock').textContent = '🔓 Lock';
       state.engine.applyLevels(state.settings.levels, state.engine.ctx.currentTime);
-      state.engine.setPlan(state.plan, state.settings);
+      state.engine.setPlan(state.plan, state.settings, Math.min(keepAt, state.plan.duration - 1));
     }
     state.lastSectionIdx = -1;
     renderPlan();
@@ -367,18 +368,23 @@
       seg.appendChild(d);
     }
     $('total').textContent = AN.formatTime(plan.duration);
-    $('planSummary').textContent = `${plan.sections.length} movements · ${plan.styleName} · key of ${AN.theory.keyName(plan.keyRoot)} · ~${plan.tempo} bpm${plan.daypartName ? ` · ${plan.daypartName.toLowerCase()}` : ''}`;
+    $('planSummary').textContent = `${plan.sections.length} movements · ${plan.styleName} · key of ${AN.theory.keyName(plan.keyRoot)} · ~${plan.tempo} bpm${plan.daypartName ? ` · ${plan.daypartName.toLowerCase()}` : ''}${plan.editCount ? ` · ${plan.editCount} edited` : ''}`;
+    $('resetEdits').hidden = !plan.editCount;
     const list = $('sectionList');
     list.innerHTML = '';
     for (const s of plan.sections) {
       const li = document.createElement('li');
       li.dataset.index = s.index;
+      li.className = s.edited ? 'edited' : '';
       li.innerHTML = `<button type="button" class="jump" title="Jump here">${AN.formatTime(s.start)}</button>
         <span class="swatch" style="background:hsl(${s.hue} 45% ${28 + s.intensity * 30}%)"></span>
-        <span class="sname">${s.name}</span>
-        <span class="sinfo">${s.keyName} ${s.mode} · ${s.chordNames.join(' – ')} · ${s.tempo} bpm</span>`;
+        <span class="sname">${escapeHtml(s.name)}${s.edited ? ' <span class="pill">edited</span>' : ''}</span>
+        <button type="button" class="edit" title="Change this movement">✎</button>
+        <span class="sinfo">${s.keyName} ${s.mode} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
       li.querySelector('.jump').addEventListener('click', () => seekTo(s.start));
+      li.querySelector('.edit').addEventListener('click', () => openEditor(s.index));
       list.appendChild(li);
+      if (state.editing === s.index) li.appendChild(buildEditor(s));
     }
     updateNow(0, true);
   }
@@ -420,6 +426,75 @@
       if (left <= 0) { engine.transport.pause(); updatePlayButton(); state.sleepAt = null; $('sleep').value = '0'; $('sleepStatus').textContent = ''; toast('Sleep timer: stopped'); }
     }
     requestAnimationFrame(tick);
+  }
+
+  // ---------- per-movement editing ----------
+  function openEditor(index) {
+    state.editing = state.editing === index ? null : index;
+    renderPlan();
+    const open = document.querySelector('#sectionList .editor');
+    if (open) open.scrollIntoView({ block: 'nearest' });
+  }
+
+  function editOf(index) {
+    if (!state.settings.edits) state.settings.edits = {};
+    return state.settings.edits[index] || (state.settings.edits[index] = {});
+  }
+
+  function setEdit(index, key, value) {
+    const e = editOf(index);
+    if (value === '' || value == null) delete e[key]; else e[key] = value;
+    if (!Object.keys(e).length) delete state.settings.edits[index];
+    state.settings = AN.storage.cleanSettings(state.settings);
+    recompose({ keep: true });
+  }
+
+  function buildEditor(section) {
+    const wrap = document.createElement('div');
+    wrap.className = 'editor';
+    const e = (state.settings.edits && state.settings.edits[section.index]) || {};
+    const field = (label, options, current, onChange) => {
+      const l = document.createElement('label');
+      l.innerHTML = `<span>${label}</span>`;
+      const sel = document.createElement('select');
+      for (const [value, text] of options) {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = text;
+        if (String(value) === String(current == null ? '' : current)) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => onChange(sel.value));
+      l.appendChild(sel);
+      wrap.appendChild(l);
+    };
+
+    field('Mood', [['', `Auto (${section.moodId})`]].concat(Object.keys(AN.MOODS).map((m) => [m, m])),
+      e.mood, (v) => setEdit(section.index, 'mood', v));
+    field('Key', [['', `Auto (${section.keyName})`]].concat(AN.theory.NOTE_NAMES.map((nm, i) => [i, nm])),
+      e.keyRoot, (v) => setEdit(section.index, 'keyRoot', v === '' ? '' : Number(v)));
+    field('Mode', [['', `Auto (${section.mode})`]].concat(Object.keys(AN.theory.MODES).map((m) => [m, m])),
+      e.mode, (v) => setEdit(section.index, 'mode', v));
+    field('Length', [['', `Auto (${Math.round(section.length / 60)} min)`]].concat([1, 2, 3, 4, 5, 6, 8, 10, 12, 15].map((m) => [m, `${m} min`])),
+      e.minutes, (v) => setEdit(section.index, 'minutes', v === '' ? '' : Number(v)));
+
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'ghost sm';
+    reset.textContent = 'Reset movement';
+    reset.disabled = !Object.keys(e).length;
+    reset.addEventListener('click', () => {
+      if (state.settings.edits) delete state.settings.edits[section.index];
+      recompose({ keep: true });
+    });
+    wrap.appendChild(reset);
+    return wrap;
+  }
+
+  function resetAllEdits() {
+    state.settings.edits = {};
+    state.editing = null;
+    recompose({ keep: true });
+    toast('All movement edits cleared');
   }
 
   // ---------- library ----------
@@ -574,6 +649,7 @@
     });
     $('mixName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
     $('share').addEventListener('click', () => copyShare(state.settings));
+    $('resetEdits').addEventListener('click', resetAllEdits);
     $('export').addEventListener('click', () => {
       AN.download(new Blob([AN.storage.exportAll()], { type: 'application/json' }), 'ambient-noiser-mixes.json');
     });
@@ -603,6 +679,6 @@
     window.addEventListener('beforeunload', autosave);
   }
 
-  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro };
+  window.AmbientNoiser = { state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro, openEditor, setEdit, resetAllEdits };
   document.addEventListener('DOMContentLoaded', init);
 })();

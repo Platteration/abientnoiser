@@ -228,14 +228,41 @@
     const dp = daypart ? AN.DAYPARTS[daypart] : null;
     const rng = AN.rng(seed, styleId, daypart || '-', 'plan');
 
+    const edits = (settings.edits && typeof settings.edits === 'object') ? settings.edits : {};
+    const editFor = (i) => edits[i] || edits[String(i)] || null;
+
     // --- section boundaries: roughly sectionLen each, varied ±25%, summing to duration
-    let n = Math.max(2, Math.round(duration / sectionLen));
+    const n = Math.max(2, Math.round(duration / sectionLen));
     const weights = [];
     for (let i = 0; i < n; i++) weights.push(rng.float(0.75, 1.25));
     const wsum = weights.reduce((a, b) => a + b, 0);
+    const lengths = weights.map((w) => (w / wsum) * duration);
+
+    // a movement given an explicit length keeps it; the rest share what is left
+    const MIN_LEN = 30;
+    const pinned = lengths.map((_, i) => {
+      const e = editFor(i);
+      return e && e.minutes ? clamp(Number(e.minutes) * 60, MIN_LEN, duration) : null;
+    });
+    if (pinned.some((p) => p !== null)) {
+      let pinnedSum = 0, freeSum = 0;
+      pinned.forEach((p, i) => { if (p === null) freeSum += lengths[i]; else pinnedSum += p; });
+      const freeRoom = duration - pinnedSum;
+      const freeCount = pinned.filter((p) => p === null).length;
+      if (freeCount === 0 || freeRoom < freeCount * MIN_LEN) {
+        // the pinned movements do not leave room: scale everything to fit
+        const all = pinned.map((p, i) => (p === null ? lengths[i] : p));
+        const total = all.reduce((a, b) => a + b, 0);
+        all.forEach((v, i) => { lengths[i] = (v / total) * duration; });
+      } else {
+        const scale = freeRoom / freeSum;
+        pinned.forEach((p, i) => { lengths[i] = p === null ? lengths[i] * scale : p; });
+      }
+    }
+
     const bounds = [0];
     let acc = 0;
-    for (let i = 0; i < n; i++) { acc += weights[i] / wsum * duration; bounds.push(i === n - 1 ? duration : Math.round(acc)); }
+    for (let i = 0; i < n; i++) { acc += lengths[i]; bounds.push(i === n - 1 ? duration : Math.round(acc)); }
 
     // --- global musical identity
     const keyRootBase = rng.int(0, 11);
@@ -261,13 +288,17 @@
           .sort((a, b) => a[1] - b[1]);
         moodId = rng.weighted([[ranked[0][0], 5], [ranked[1][0], 3], [ranked[2][0], 1]]);
       }
+      const edit = editFor(i);
+      if (edit && AN.MOODS[edit.mood]) moodId = edit.mood;
       const mood = AN.MOODS[moodId];
       const srng = AN.rng(seed, styleId, 'section', i);
 
       // key: mostly stay, sometimes modulate to a related key
       let keyRoot = prev ? prev.keyRoot : keyRootBase;
       if (prev && srng.bool(0.35)) keyRoot = (keyRoot + srng.pick([5, 7, 9, 2, 3, 10])) % 12;
-      const mode = pickMode(srng, mood, style, prev && prev.mode);
+      let mode = pickMode(srng, mood, style, prev && prev.mode);
+      if (edit && Number.isInteger(edit.keyRoot)) keyRoot = ((edit.keyRoot % 12) + 12) % 12;
+      if (edit && AN.theory.MODES[edit.mode]) mode = edit.mode;
 
       const tempo = clamp(tempoBase + mood.tempoDelta + (dp ? dp.tempo : 0) + srng.int(-1, 1), style.tempo[0] - 8, style.tempo[1] + 8);
       const intensity = clamp(mood.intensity + srng.gauss(0, 0.05), 0.05, 1);
@@ -281,6 +312,7 @@
       sections.push({
         index: i, start, end, length: end - start,
         moodId, name: moodName(srng, mood), hue: mood.hue,
+        edited: !!edit,
         intensity, brightness, density: clamp(mood.density + srng.gauss(0, 0.05), 0.05, 1),
         keyRoot, keyName: T.keyName(keyRoot), mode, tempo, swing,
         chordBars: style.chordBars, chordSize, progression,
@@ -325,6 +357,7 @@
       seed, style: styleId, styleName: style.name, duration, sections,
       keyRoot: keyRootBase, tempo: tempoBase, lofi: style.lofi,
       daypart, daypartName: dp ? dp.label : null,
+      editCount: sections.filter((s) => s.edited).length,
     };
   };
 

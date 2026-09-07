@@ -73,14 +73,14 @@
       notes.forEach((m, i) => S.bell(this.graph, this.graph.layers.ui, { midi: m, t: t + i * 0.17, vel: 0.45, pan: 0 }));
     }
 
-    /** Swap in a new plan (new seed/style/length) and restart from the top. */
-    setPlan(plan, settings) {
+    /** Swap in a new plan (new seed, style, length or edits) and restart at `pos`. */
+    setPlan(plan, settings, pos = 0) {
       this.plan = plan;
       this.transport.plan = plan;
       if (settings) Object.assign(this.settings, settings);
       this.section = null;
       this.barRng = null;
-      this.transport.seek(0);
+      this.transport.seek(pos);
     }
 
     startTextures(t) {

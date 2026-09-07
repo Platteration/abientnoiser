@@ -14,6 +14,25 @@
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+  /** Per-movement overrides: { "3": { mood, keyRoot, mode, minutes } }. */
+  function cleanEdits(edits) {
+    const out = {};
+    if (!edits || typeof edits !== 'object') return out;
+    for (const key of Object.keys(edits)) {
+      const i = Number(key);
+      if (!Number.isInteger(i) || i < 0 || i > 400) continue;
+      const e = edits[key] || {};
+      const clean = {};
+      if (AN.MOODS[e.mood]) clean.mood = e.mood;
+      if (AN.theory.MODES[e.mode]) clean.mode = e.mode;
+      if (Number.isInteger(Number(e.keyRoot))) clean.keyRoot = ((Number(e.keyRoot) % 12) + 12) % 12;
+      const mins = Number(e.minutes);
+      if (Number.isFinite(mins) && mins > 0) clean.minutes = Math.min(60, Math.max(0.5, Math.round(mins * 2) / 2));
+      if (Object.keys(clean).length) out[i] = clean;
+    }
+    return out;
+  }
+
   function cleanSettings(s) {
     const style = AN.STYLES[s.style] ? s.style : 'ambient';
     const levels = {};
@@ -29,6 +48,7 @@
       sectionMin: Math.min(15, Math.max(1, Number(s.sectionMin) || 4)),
       levels,
       volume: Math.min(1, Math.max(0, Number.isFinite(Number(s.volume)) ? Number(s.volume) : 0.8)),
+      edits: cleanEdits(s.edits),
     };
   }
 

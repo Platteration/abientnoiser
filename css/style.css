@@ -223,3 +223,18 @@ body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-i
 
 /* export progress */
 #wavProgress { width: 140px; height: 8px; accent-color: var(--accent); }
+
+/* movement editor */
+.movements li { grid-template-columns: 4.4rem 10px 1fr auto; }
+.movements li.edited { box-shadow: inset 2px 0 0 var(--accent); }
+.movements .edit { background: none; border: 0; color: var(--muted); padding: 0 0.35rem; font-size: 0.95rem; }
+.movements .edit:hover { color: var(--accent); }
+.movements .sinfo { grid-column: 1 / -1; }
+.pill { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); border: 1px solid currentColor; border-radius: 999px; padding: 0 0.35em; vertical-align: 0.1em; }
+.editor { grid-column: 1 / -1; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; padding: 0.6rem 0 0.3rem; border-top: 1px solid var(--line); margin-top: 0.35rem; }
+.editor label { display: grid; gap: 0.15rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.editor select { padding: 0.25rem 0.4rem; font-size: 0.85rem; text-transform: none; letter-spacing: 0; }
+#resetEdits { margin-top: 0.6rem; }
+
+/* keep the movement list readable over the visualiser */
+.movements[open] ol { background: color-mix(in srgb, var(--card) 84%, transparent); border-radius: 10px; padding: 0.3rem; }

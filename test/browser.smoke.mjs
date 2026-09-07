@@ -265,6 +265,45 @@ try {
     && s.step <= wav.globalStep * 1.05);
   check(seamOk, `chunk joins are continuous (${wav.seams.map((s) => `${s.t}s ${s.before.toFixed(3)}->${s.after.toFixed(3)}`).join(', ')})`);
 
+  // per-movement editing
+  await page.evaluate(() => AmbientNoiser.resetAllEdits());
+  const edited = await page.evaluate(() => {
+    AmbientNoiser.setEdit(1, 'mood', 'tension');
+    AmbientNoiser.setEdit(1, 'minutes', 6);
+    AmbientNoiser.setEdit(1, 'mode', 'phrygian');
+    const p = AmbientNoiser.state.plan;
+    return {
+      mood: p.sections[1].moodId, mode: p.sections[1].mode, minutes: p.sections[1].length / 60,
+      total: p.sections.reduce((a, s) => a + s.length, 0), duration: p.duration,
+      editCount: p.editCount, edited: p.sections[1].edited,
+      contiguous: p.sections.every((s, i) => i === 0 || s.start === p.sections[i - 1].end),
+    };
+  });
+  check(edited.mood === 'tension' && edited.mode === 'phrygian' && Math.abs(edited.minutes - 6) < 0.02
+    && edited.total === edited.duration && edited.contiguous && edited.editCount === 1,
+    `movement edits apply and keep the loop exactly ${edited.duration / 60} min (movement 2 is now ${edited.minutes} min of ${edited.mood})`);
+
+  const editRoundTrip = await page.evaluate(() => {
+    const code = AN.storage.encodeShare(AmbientNoiser.state.settings);
+    const back = AN.storage.decodeShare(code);
+    const plan = AN.compose(back);
+    return { mood: plan.sections[1].moodId, minutes: plan.sections[1].length / 60, count: plan.editCount };
+  });
+  check(editRoundTrip.mood === 'tension' && Math.abs(editRoundTrip.minutes - 6) < 0.02,
+    'edits survive a share link round trip');
+
+  const editUi = await page.evaluate(() => {
+    AmbientNoiser.openEditor(1);
+    const n = document.querySelectorAll('#sectionList .editor select').length;
+    const pill = document.querySelectorAll('#sectionList li.edited').length;
+    AmbientNoiser.openEditor(1);
+    return { selects: n, pill, closed: document.querySelectorAll('#sectionList .editor').length };
+  });
+  check(editUi.selects === 4 && editUi.pill === 1 && editUi.closed === 0, 'the movement editor opens, marks the row and closes again');
+
+  const cleared = await page.evaluate(() => { AmbientNoiser.resetAllEdits(); return AmbientNoiser.state.plan.editCount; });
+  check(cleared === 0, 'reset clears every movement edit');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
