@@ -304,6 +304,15 @@ try {
   const cleared = await page.evaluate(() => { AmbientNoiser.resetAllEdits(); return AmbientNoiser.state.plan.editCount; });
   check(cleared === 0, 'reset clears every movement edit');
 
+  // share card
+  const card = await page.evaluate(async () => {
+    const blob = await AN.shareCard(AmbientNoiser.state.plan, AmbientNoiser.state.settings);
+    const bmp = await createImageBitmap(blob);
+    return { type: blob.type, size: blob.size, w: bmp.width, h: bmp.height };
+  });
+  check(card.type === 'image/png' && card.w === 1200 && card.h === 630 && card.size > 20000,
+    `share card renders a ${card.w}x${card.h} PNG (${(card.size / 1024).toFixed(0)} KB)`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

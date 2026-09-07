@@ -55,3 +55,13 @@ test('sections carry the style fields the engine dispatches on', () => {
     }
   }
 });
+
+test('movement names are unique within a plan', () => {
+  for (const style of Object.keys(AN.STYLES)) {
+    for (const seed of ['one', 'two', 'three']) {
+      const plan = AN.compose({ seed, style, durationMin: 120, sectionMin: 2 });
+      const names = plan.sections.map((s) => s.name);
+      assert.equal(new Set(names).size, names.length, `${style}/${seed} repeats a movement name`);
+    }
+  }
+});

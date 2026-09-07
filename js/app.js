@@ -649,6 +649,13 @@
     });
     $('mixName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
     $('share').addEventListener('click', () => copyShare(state.settings));
+    $('card').addEventListener('click', async () => {
+      try {
+        const blob = await AN.shareCard(state.plan, state.settings);
+        AN.download(blob, `${fileStem()}.png`);
+        toast('Image saved');
+      } catch (e) { toast(`Could not draw the image: ${e.message}`); }
+    });
     $('resetEdits').addEventListener('click', resetAllEdits);
     $('export').addEventListener('click', () => {
       AN.download(new Blob([AN.storage.exportAll()], { type: 'application/json' }), 'ambient-noiser-mixes.json');

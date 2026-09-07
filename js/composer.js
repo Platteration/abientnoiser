@@ -208,8 +208,15 @@
     return rng.pick(pool);
   }
 
-  function moodName(rng, mood) {
-    return `${rng.pick(mood.words[0])} ${rng.pick(mood.words[1])}`;
+  /** A two-word name for a movement, avoiding names already used in this plan. */
+  function moodName(rng, mood, used) {
+    let name = '';
+    for (let k = 0; k < 12; k++) {
+      name = `${rng.pick(mood.words[0])} ${rng.pick(mood.words[1])}`;
+      if (!used || !used.has(name)) break;
+    }
+    if (used) used.add(name);
+    return name;
   }
 
   /**
@@ -272,6 +279,7 @@
 
     // --- assign moods along an intensity arc (low at both ends so the loop seam is calm)
     const moodIds = Object.keys(AN.MOODS);
+    const usedNames = new Set();
     const sections = [];
     let prev = null;
     for (let i = 0; i < n; i++) {
@@ -311,7 +319,7 @@
       const start = bounds[i], end = bounds[i + 1];
       sections.push({
         index: i, start, end, length: end - start,
-        moodId, name: moodName(srng, mood), hue: mood.hue,
+        moodId, name: moodName(srng, mood, usedNames), hue: mood.hue,
         edited: !!edit,
         intensity, brightness, density: clamp(mood.density + srng.gauss(0, 0.05), 0.05, 1),
         keyRoot, keyName: T.keyName(keyRoot), mode, tempo, swing,
