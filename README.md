@@ -57,10 +57,16 @@ A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Se
 
 ```bash
 npm test               # node --test: PRNG, theory, composer, styles, app shell
+npm run test:musical   # every style's whole loop, checked for wrong notes
 npm run test:browser   # Playwright + Chromium, end to end
+npm run test:all       # all three
 ```
 
-The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, that the live transport advances, wraps, seeks and releases its sources, and that steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser and save/load/share all behave.
+`test:musical` schedules all eight styles end to end with the synths stubbed out — about 45,000 notes — and checks every one is in the key of the movement that asked for it, inside its layer's register, and a real MIDI number, plus that the walking bass walks rather than leaps. A one-semitone error anywhere fails it.
+
+The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
+
+Both suites run in CI on every push (`.github/workflows/ci.yml`).
 
 ## How it works
 

@@ -6,7 +6,12 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "test": "node --test test/*.test.js",
-    "test:browser": "node test/browser.smoke.mjs"
+    "test:browser": "node test/browser.smoke.mjs",
+    "test:musical": "node test/musical.smoke.mjs",
+    "test:all": "npm test && npm run test:musical && npm run test:browser"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
 }

@@ -61,6 +61,14 @@
     return m;
   }
 
+  /** The octave of `midi`'s pitch class closest to `near`, kept inside [low, high]. */
+  function nearestOctave(midi, near, low, high) {
+    let m = midi;
+    while (m - 12 >= low && Math.abs(m - 12 - near) < Math.abs(m - near)) m -= 12;
+    while (m + 12 <= high && Math.abs(m + 12 - near) < Math.abs(m - near)) m += 12;
+    return m;
+  }
+
   /** All scale notes of a mode in [low, high]. */
   function scaleNotes(keyMidi, mode, low, high) {
     const scale = MODES[mode];
@@ -73,7 +81,7 @@
 
   AN.theory = {
     NOTE_NAMES, MODES, midiToFreq, chordTones, chordQuality, chordName,
-    voiceChord, rootInRange, scaleNotes,
+    voiceChord, rootInRange, scaleNotes, nearestOctave,
     keyName: (root) => NOTE_NAMES[((root % 12) + 12) % 12],
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

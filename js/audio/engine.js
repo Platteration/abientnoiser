@@ -219,7 +219,7 @@
     walkBass(chord, ev, swingT, rng) {
       const { section, sixteenth, stepIndex, stepLen } = ev;
       if (sixteenth % 4 !== 0) return;
-      const low = 36;
+      const low = 36, high = low + 19;
       const chordSteps = section.chordBars * 16;
       const posInChord = stepIndex % chordSteps;
       const scale = T.scaleNotes(chord.keyMidi, section.mode, low, low + 17);
@@ -227,17 +227,18 @@
       const chordNotes = scale.filter((m) => chord.tones.some((tn) => ((m - chord.keyMidi - tn) % 12 + 12) % 12 === 0));
       let midi;
       if (posInChord === 0 || this.lastBass == null) {
-        midi = rootMidi;
+        // land on the root, in whichever octave keeps the line walking rather than leaping
+        midi = this.lastBass == null ? rootMidi : T.nearestOctave(rootMidi, this.lastBass, low, high);
       } else if (posInChord + 4 >= chordSteps) {
         const next = this.chordAt(section, stepIndex + 4);
         const nextRoot = T.rootInRange(next.tones[0], next.keyMidi, low);
-        midi = nextRoot + rng.pick([-1, 1, -2, 2]); // approach from a step away
+        midi = T.nearestOctave(nextRoot + rng.pick([-1, 1, -2, 2]), this.lastBass, low, high); // approach from a step away
       } else {
         const near = chordNotes.concat(scale).filter((m) => Math.abs(m - this.lastBass) <= 5 && m !== this.lastBass);
-        midi = near.length ? rng.pick(near) : rootMidi;
+        midi = near.length ? rng.pick(near) : T.nearestOctave(rootMidi, this.lastBass, low, high);
       }
       if (midi < low) midi += 12;
-      if (midi > low + 19) midi -= 12;
+      if (midi > high) midi -= 12;
       this.lastBass = midi;
       S.bass(this.graph, this.graph.layers.bass, {
         midi, t: swingT, dur: stepLen * 4 * 0.92, vel: 0.5 + rng.float(-0.05, 0.08),

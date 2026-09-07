@@ -553,6 +553,59 @@ try {
   check(teardown.running && teardown.stopped && teardown.disposed && teardown.sources === 0,
     'a discarded engine stops its tape oscillators and releases every source');
 
+  // the whole working state comes back after a reload
+  const persist = await browser.newPage();
+  await persist.goto(`http://localhost:${port}/`);
+  await persist.waitForSelector('.seg');
+  const saved = await persist.evaluate(async () => {
+    AmbientNoiser.applySettings(Object.assign(AN.defaultSettings('jazz'), {
+      seed: 'persist-me', durationMin: 45, sectionMin: 3, daypart: 'evening', volume: 0.42,
+    }));
+    AmbientNoiser.state.settings.levels.cafe = 0.37;
+    AmbientNoiser.state.settings.levels.drums = 0.66;
+    AmbientNoiser.setEdit(2, 'mood', 'glow');
+    AmbientNoiser.setEdit(2, 'minutes', 5);
+    const mix = AN.storage.save('Persisted mix', AmbientNoiser.state.settings);
+    AmbientNoiser.state.queue = [];
+    AmbientNoiser.enqueue(mix.id);
+    document.getElementById('crossfade').value = '15';
+    document.getElementById('crossfade').dispatchEvent(new Event('change'));
+    AmbientNoiser.setQuiet(true);
+    AN.storage.autosave(AmbientNoiser.state.settings);
+    return { seed: AmbientNoiser.state.settings.seed, mixId: mix.id };
+  });
+  await persist.reload();
+  await persist.waitForSelector('.seg');
+  const back = await persist.evaluate(() => {
+    const s = AmbientNoiser.state.settings;
+    return {
+      seed: s.seed, style: s.style, durationMin: s.durationMin, sectionMin: s.sectionMin,
+      daypart: s.daypart, volume: s.volume, cafe: s.levels.cafe, drums: s.levels.drums,
+      edit: s.edits && s.edits[2], editCount: AmbientNoiser.state.plan.editCount,
+      seedField: document.getElementById('seed').value,
+      durationField: document.getElementById('duration').value,
+      daypartField: document.getElementById('daypart').value,
+      volumeField: document.getElementById('volume').value,
+      cafeFader: [...document.querySelectorAll('#ambienceMixer input')].find((i) => i.dataset.layer === 'cafe').value,
+      queue: AmbientNoiser.state.queue.length,
+      crossfade: document.getElementById('crossfade').value,
+      quiet: document.body.classList.contains('quiet'),
+      library: AN.storage.list().length,
+    };
+  });
+  await persist.close();
+  const settingsBack = back.seed === 'persist-me' && back.style === 'jazz' && back.durationMin === 45
+    && back.sectionMin === 3 && back.daypart === 'evening' && Math.abs(back.volume - 0.42) < 0.01
+    && Math.abs(back.cafe - 0.37) < 0.01 && Math.abs(back.drums - 0.66) < 0.01;
+  check(settingsBack, `settings come back after a reload (${back.style}, ${back.durationMin} min, ${back.daypart}, volume ${back.volume})`);
+  check(back.edit && back.edit.mood === 'glow' && back.edit.minutes === 5 && back.editCount === 1,
+    'movement edits come back after a reload');
+  const fieldsBack = back.seedField === 'persist-me' && Number(back.durationField) === 45
+    && back.daypartField === 'evening' && Number(back.volumeField) === 42 && Number(back.cafeFader) === 37;
+  check(fieldsBack, `every control shows the restored values (seed ${back.seedField}, volume ${back.volumeField}, café ${back.cafeFader})`);
+  check(back.queue === 1 && back.crossfade === '15' && back.quiet && back.library >= 1,
+    `queue, crossfade, quiet mode and library survive too (${back.queue} queued, ${back.crossfade}s, ${back.library} saved)`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
