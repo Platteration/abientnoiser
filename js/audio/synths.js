@@ -14,47 +14,56 @@
 
   const S = {};
 
-  /** Warm detuned pad. midis: array of MIDI notes. */
-  S.pad = function (graph, layer, { midis, t, dur, brightness = 0.5, level = 0.25, pan = 0, wave = 'sawtooth', rng }) {
+  /** Warm detuned pad. The two detuned copies are panned apart, which widens the
+   *  chord without any phase trickery. midis: array of MIDI notes. */
+  S.pad = function (graph, layer, { midis, t, dur, brightness = 0.5, level = 0.25, pan = 0, wave = 'sawtooth', rng, width = 0.32 }) {
     const c = graph.ctx;
     t = Math.max(t, c.currentTime);
-    const { out, p } = output(graph, layer, pan);
     const attack = Math.min(dur * 0.45, 2.2 + (1 - brightness) * 2.5);
     const release = Math.min(9, 3 + dur * 0.35);
     const end = t + dur + release * 2;
-
-    const filt = c.createBiquadFilter();
-    filt.type = 'lowpass'; filt.Q.value = 0.8;
     const cutoff = 260 + brightness * 1900;
-    filt.frequency.setValueAtTime(cutoff * 0.5, t);
-    filt.frequency.linearRampToValueAtTime(cutoff, t + attack);
-    filt.connect(out);
 
-    const lfo = c.createOscillator();
-    lfo.frequency.value = rng ? rng.float(0.05, 0.14) : 0.08;
-    const lfoG = c.createGain(); lfoG.gain.value = cutoff * 0.35;
-    lfo.connect(lfoG); lfoG.connect(filt.frequency);
-    lfo.start(t); lfo.stop(end);
-
+    const out = c.createGain();
+    out.connect(layer.input);
     const g = level / Math.sqrt(Math.max(1, midis.length));
     out.gain.setValueAtTime(0, t);
     out.gain.linearRampToValueAtTime(g, t + attack);
     out.gain.setValueAtTime(g, t + dur);
     out.gain.setTargetAtTime(0, t + dur, release / 4);
 
+    const shared = [out];
+    const sides = [-7, 6].map((detune, si) => {
+      const filt = c.createBiquadFilter();
+      filt.type = 'lowpass'; filt.Q.value = 0.8;
+      filt.frequency.setValueAtTime(cutoff * 0.5, t);
+      filt.frequency.linearRampToValueAtTime(cutoff, t + attack);
+      const pn = graph.panner(Math.max(-1, Math.min(1, pan + (si ? width : -width))));
+      filt.connect(pn); pn.connect(out);
+
+      const lfo = c.createOscillator();
+      lfo.frequency.value = (rng ? rng.float(0.05, 0.14) : 0.08) * (si ? 1.23 : 1);
+      const lfoG = c.createGain(); lfoG.gain.value = cutoff * 0.35;
+      lfo.connect(lfoG); lfoG.connect(filt.frequency);
+      lfo.start(t); lfo.stop(end);
+      graph.track(lfo, lfoG);
+      shared.push(filt, pn);
+      return { detune, filt };
+    });
+
+    let first = true;
     midis.forEach((m, i) => {
       const f = mtof(m);
-      for (const d of [-7, 6]) {
+      for (const side of sides) {
         const o = c.createOscillator();
         o.type = wave;
         o.frequency.value = f;
-        o.detune.value = d + i * 1.7;
-        o.connect(filt);
+        o.detune.value = side.detune + i * 1.7;
+        o.connect(side.filt);
         o.start(t); o.stop(end);
-        graph.track(o);
+        if (first) { graph.track(o, ...shared); first = false; } else graph.track(o);
       }
     });
-    graph.track(lfo, lfoG, filt, out, p);
   };
 
   /** Long low drone: sub sine + soft saws through a slowly breathing filter. */

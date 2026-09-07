@@ -27,16 +27,40 @@
         this.comp.connect(this.recordDest);
       }
 
-      // reverb (generated impulse response)
+      // reverb (generated impulse responses): a long hall, and a short room for drums
       this.reverb = c.createConvolver();
-      this.reverb.buffer = this.makeImpulse(3.4, 2.6);
+      this.reverb.buffer = this.makeImpulse(3.4, 2.6, 'hall');
       this.reverbGain = c.createGain();
       this.reverbGain.gain.value = 0.9;
       this.reverb.connect(this.reverbGain);
       this.reverbGain.connect(this.master);
 
-      // music chain: bus -> lo-fi lowpass -> soft saturation -> master
+      this.roomReverb = c.createConvolver();
+      this.roomReverb.buffer = this.makeImpulse(0.9, 4.5, 'room');
+      this.roomGain = c.createGain();
+      this.roomGain.gain.value = 0.8;
+      this.roomReverb.connect(this.roomGain);
+      this.roomGain.connect(this.master);
+
+      // music chain: [pump] -> bus -> tape wobble -> lo-fi lowpass -> saturation -> master
       this.musicBus = c.createGain();
+
+      // pads, drone and arp pass through here so the kick can duck them
+      this.pump = c.createGain();
+      this.pump.gain.value = 1;
+      this.pump.connect(this.musicBus);
+
+      // a short modulated delay: constant delay is inaudible, modulation is tape wow and flutter
+      this.tape = c.createDelay(0.05);
+      this.tape.delayTime.value = 0.006;
+      this.wow = c.createOscillator(); this.wow.frequency.value = 0.7;
+      this.wowGain = c.createGain(); this.wowGain.gain.value = 0;
+      this.wow.connect(this.wowGain); this.wowGain.connect(this.tape.delayTime);
+      this.flutter = c.createOscillator(); this.flutter.frequency.value = 6.3;
+      this.flutterGain = c.createGain(); this.flutterGain.gain.value = 0;
+      this.flutter.connect(this.flutterGain); this.flutterGain.connect(this.tape.delayTime);
+      try { this.wow.start(0); this.flutter.start(0); } catch (e) { /* already started */ }
+
       this.lofiFilter = c.createBiquadFilter();
       this.lofiFilter.type = 'lowpass'; this.lofiFilter.Q.value = 0.4;
       this.openCutoff = Math.min(18000, c.sampleRate * 0.45);
@@ -44,7 +68,8 @@
       this.shaper = c.createWaveShaper();
       this.shaper.curve = Graph.curve(0);
       this.shaper.oversample = '2x';
-      this.musicBus.connect(this.lofiFilter);
+      this.musicBus.connect(this.tape);
+      this.tape.connect(this.lofiFilter);
       this.lofiFilter.connect(this.shaper);
       this.shaper.connect(this.master);
 
@@ -56,18 +81,29 @@
       this._offset = 0;
     }
 
-    /** input(section multiplier) -> user(mixer level) -> bus; user -> send -> reverb */
-    layer(name, bus = 'music', sendLevel = 0.3) {
+    /** input(section multiplier) -> user(mixer level) -> bus; user -> send -> reverb.
+     *  bus: 'music' | 'pump' (ducked by the kick) | 'ambience'. */
+    layer(name, bus = 'music', sendLevel = 0.3, reverb = 'hall') {
       if (this.layers[name]) return this.layers[name];
       const c = this.ctx;
       const input = c.createGain(); input.gain.value = 1;
       const user = c.createGain(); user.gain.value = 1;
       const send = c.createGain(); send.gain.value = sendLevel;
       input.connect(user);
-      user.connect(bus === 'music' ? this.musicBus : this.ambienceBus);
+      user.connect(bus === 'ambience' ? this.ambienceBus : bus === 'pump' ? this.pump : this.musicBus);
       user.connect(send);
-      send.connect(this.reverb);
+      send.connect(reverb === 'room' ? this.roomReverb : this.reverb);
       return (this.layers[name] = { name, input, user, send });
+    }
+
+    /** Duck the pumped layers under a kick. */
+    pumpDuck(t, amount) {
+      if (!(amount > 0)) return;
+      const g = this.pump.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(1, t);
+      g.linearRampToValueAtTime(Math.max(0.1, 1 - amount), t + 0.018);
+      g.setTargetAtTime(1, t + 0.03, 0.085);
     }
 
     setUserLevel(name, level, t) {
@@ -88,12 +124,14 @@
       this.master.gain.setTargetAtTime(Math.max(0, v), t, 0.05);
     }
 
-    /** Lo-fi character: closed-down lowpass + gentle saturation. */
+    /** Lo-fi character: closed-down lowpass, gentle saturation, tape wow and flutter. */
     setCharacter(lofi, brightness, t) {
       const f = lofi ? Math.min(this.openCutoff, 2200 + brightness * 4500) : this.openCutoff;
       this.lofiFilter.frequency.setTargetAtTime(f, t, 1.5);
       const drive = lofi ? 0.35 : 0;
       if (this._drive !== drive) { this.shaper.curve = Graph.curve(drive); this._drive = drive; }
+      this.wowGain.gain.setTargetAtTime(lofi ? 0.0012 : 0, t, 1);
+      this.flutterGain.gain.setTargetAtTime(lofi ? 0.00012 : 0, t, 1);
     }
 
     static curve(drive) {
@@ -106,17 +144,19 @@
       return arr;
     }
 
-    makeImpulse(seconds, decay) {
+    makeImpulse(seconds, decay, kind = 'hall') {
       const c = this.ctx, sr = c.sampleRate, len = Math.floor(sr * seconds);
       const buf = c.createBuffer(2, len, sr);
-      const rng = AN.rng('impulse');
+      const rng = AN.rng('impulse', kind);
+      const smooth = kind === 'room' ? 0.55 : 0.25; // rooms keep more high end
+      const gain = kind === 'room' ? 1.4 : 2.2;
       for (let ch = 0; ch < 2; ch++) {
         const d = buf.getChannelData(ch);
         let y = 0;
         for (let i = 0; i < len; i++) {
           const x = (rng.next() * 2 - 1) * Math.pow(1 - i / len, decay);
-          y += 0.25 * (x - y); // one-pole lowpass -> darker tail
-          d[i] = y * 2.2;
+          y += smooth * (x - y); // one-pole lowpass -> darker tail
+          d[i] = y * gain;
         }
       }
       return buf;

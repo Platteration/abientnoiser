@@ -5,7 +5,10 @@
   const T = AN.theory;
   const S = AN.synths;
 
-  const SENDS = { pads: 0.45, melody: 0.5, arp: 0.3, bass: 0.05, drums: 0.12, drone: 0.3 };
+  const SENDS = { pads: 0.45, melody: 0.5, arp: 0.3, bass: 0.05, drums: 0.2, drone: 0.3 };
+  const BUSES = { pads: 'pump', arp: 'pump' };          // ducked under the kick
+  const REVERBS = { drums: 'room' };                     // short room, not the long hall
+  const PUMP = { lofi: 0.32, electro: 0.42, brush: 0 };  // sidechain depth per kit
   const BASS_PATTERNS = [[0, 10], [0, 6, 8], [0, 8, 14], [0, 3, 8, 11]];
 
   class Engine {
@@ -14,8 +17,8 @@
       this.plan = plan;
       this.settings = settings;
       this.graph = new AN.Graph(ctx, { volume: settings.volume, offline: opts.offline });
-      for (const l of AN.MUSIC_LAYERS) this.graph.layer(l.id, 'music', SENDS[l.id]);
-      this.graph.layer('drone', 'music', SENDS.drone);
+      for (const l of AN.MUSIC_LAYERS) this.graph.layer(l.id, BUSES[l.id] || 'music', SENDS[l.id], REVERBS[l.id]);
+      this.graph.layer('drone', 'pump', SENDS.drone);
       this.graph.layer('ui', 'music', 0.4); // timer chimes, always audible
       this.textures = AN.ambience.create(this.graph);
       this.levels = Object.assign({}, settings.levels);
@@ -145,7 +148,11 @@
       if ((this.levels.melody || 0) > 0 && (section.music.melody || 0) > 0 && this.barPlan.melodyActive) this.playMelody(chord, ev, swingT, rng);
       if ((this.levels.arp || 0) > 0 && (section.music.arp || 0) > 0) this.playArp(chord, ev, rng);
       if (section.kit && (this.levels.drums || 0) > 0 && section.drumPattern !== 'off') {
-        AN.drums.step(this.graph, this.graph.layers.drums, { t, stepLen, section, sixteenth, bar, rng: AN.rng(seed, 'drums', section.index, bar, sixteenth), swing: section.swing });
+        AN.drums.step(this.graph, this.graph.layers.drums, {
+          t, stepLen, section, sixteenth, bar, swing: section.swing,
+          rng: AN.rng(seed, 'drums', section.index, bar, sixteenth),
+          pump: (PUMP[section.kit] || 0) * (this.levels.drums || 0),
+        });
       }
       // ambience one-shots for this step's window
       const p0 = ev.p, p1 = ev.p + stepLen;

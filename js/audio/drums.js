@@ -11,9 +11,10 @@
     return { g, p };
   }
 
-  D.kick = function (graph, layer, { t, vel = 0.9 }) {
+  D.kick = function (graph, layer, { t, vel = 0.9, pump = 0 }) {
     const c = graph.ctx;
     t = Math.max(t, c.currentTime);
+    graph.pumpDuck(t, pump * vel);
     const { g, p } = out(graph, layer, 0);
     const o = c.createOscillator(); o.type = 'sine';
     o.frequency.setValueAtTime(165, t);
@@ -193,7 +194,7 @@
     return D.lofiStep(graph, layer, ev);
   };
 
-  D.lofiStep = function (graph, layer, { t, stepLen, section, sixteenth, bar, rng, swing }) {
+  D.lofiStep = function (graph, layer, { t, stepLen, section, sixteenth, bar, rng, swing, pump }) {
     const pat = section.drumPattern;
     const v = section.drumVariant;
     const P = D.PATTERNS;
@@ -206,9 +207,9 @@
     const lastBarOfPhrase = bar % 8 === 7;
 
     if (kick[sixteenth] === 'x' && !(rng.bool(0.06) && sixteenth !== 0)) {
-      D.kick(graph, layer, { t: time, vel: 0.85 + rng.float(-0.08, 0.1) });
+      D.kick(graph, layer, { t: time, vel: 0.85 + rng.float(-0.08, 0.1), pump });
     } else if (pat === 'full' && (sixteenth === 14 || sixteenth === 11) && rng.bool(0.12 * dens)) {
-      D.kick(graph, layer, { t: time, vel: 0.6 });
+      D.kick(graph, layer, { t: time, vel: 0.6, pump });
     }
 
     if (snare[sixteenth] === 'x') {
@@ -231,7 +232,7 @@
   };
 
   /** Jazz brushes: swung ride, brush swirl on the backbeat, feathered kick. */
-  D.brushStep = function (graph, layer, { t, stepLen, section, sixteenth, bar, rng, swing }) {
+  D.brushStep = function (graph, layer, { t, stepLen, section, sixteenth, bar, rng, swing, pump }) {
     let time = t;
     if (sixteenth % 2 === 1) time += (swing - 0.5) * 2 * stepLen;
     time += rng.gauss(0, 0.005);
@@ -257,12 +258,12 @@
   };
 
   /** Synthwave: straight kick, clap backbeat, eighth-note hats. */
-  D.electroStep = function (graph, layer, { t, section, sixteenth, bar, rng }) {
+  D.electroStep = function (graph, layer, { t, section, sixteenth, bar, rng, pump }) {
     const time = t + rng.gauss(0, 0.002);
     const full = section.drumPattern === 'full';
     const light = section.drumPattern !== 'sparse';
-    if (sixteenth === 0 || sixteenth === 8) D.kick(graph, layer, { t: time, vel: 0.9 });
-    else if (full && sixteenth === 14 && rng.bool(0.4)) D.kick(graph, layer, { t: time, vel: 0.6 });
+    if (sixteenth === 0 || sixteenth === 8) D.kick(graph, layer, { t: time, vel: 0.9, pump });
+    else if (full && sixteenth === 14 && rng.bool(0.4)) D.kick(graph, layer, { t: time, vel: 0.6, pump });
     if (sixteenth === 4 || sixteenth === 12) D.clap(graph, layer, { t: time, vel: 0.55 + rng.float(-0.05, 0.05) });
     if (sixteenth % (light ? 2 : 4) === 0) {
       D.hat(graph, layer, { t: time, vel: (sixteenth % 4 === 0 ? 0.2 : 0.3), open: light && sixteenth === 14 && rng.bool(0.5) });
