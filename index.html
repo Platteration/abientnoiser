@@ -31,13 +31,14 @@
       <div class="now">
         <button id="play" class="play" type="button" aria-label="Play">▶</button>
         <div class="now-text">
-          <div class="mood"><span id="moodName">—</span> <span class="badge" id="moodTag"></span></div>
+          <div class="mood" aria-live="polite"><span id="moodName">—</span> <span class="badge" id="moodTag"></span></div>
           <div class="meta" id="nowMeta"></div>
           <div class="next" id="nextMood"></div>
         </div>
         <div class="clock"><span id="elapsed">0:00</span><span class="sep">/</span><span id="total">60:00</span></div>
       </div>
-      <div class="timeline" id="timeline" title="Click to jump">
+      <div class="timeline" id="timeline" title="Click or use the arrow keys to move through the piece"
+           role="slider" tabindex="0" aria-label="Position in the piece" aria-valuemin="0" aria-valuenow="0">
         <div class="segments" id="segments"></div>
         <div class="playhead" id="playhead"></div>
       </div>

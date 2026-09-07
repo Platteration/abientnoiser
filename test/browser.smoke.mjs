@@ -172,10 +172,10 @@ try {
     AmbientNoiser.setPomodoro(25);
     const before = e.graph.layers.drums.user.gain.value;
     AmbientNoiser.state.pomo.endsAt = Date.now() - 1;
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 900)); // the logic ticker runs twice a second
     const onBreak = e.duck.drums;
     AmbientNoiser.state.pomo.endsAt = Date.now() - 1;
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 900));
     const back = Object.keys(e.duck).length;
     AmbientNoiser.setPomodoro(0);
     return { before, onBreak, back, phase: AmbientNoiser.state.pomo === null };
@@ -389,6 +389,43 @@ try {
   check(background.pomoAdvanced && background.fading && background.stopped,
     'focus and sleep timers keep running with no animation frames (a background tab)');
   check(background.gain < background.volume, `the sleep timer fades out rather than cutting (gain ${background.gain.toFixed(3)} of ${background.volume})`);
+
+  // every style has its own accent colour, and the timeline is a real slider
+  const accents = await page.evaluate(() => {
+    const out = {};
+    for (const id of Object.keys(AN.STYLES)) {
+      const card = document.querySelector(`.style[data-style="${id}"]`);
+      out[id] = (card && card.style.getPropertyValue('--accent')) || '';
+    }
+    return out;
+  });
+  const accentValues = Object.values(accents);
+  check(accentValues.every((v) => /^#[0-9a-f]{6}$/i.test(v.trim())) && new Set(accentValues).size === accentValues.length,
+    `all ${accentValues.length} styles have a distinct accent colour`);
+
+  const slider = await page.evaluate(async () => {
+    const tl = document.getElementById('timeline');
+    tl.focus();
+    const engine = AmbientNoiser.ensureEngine();
+    if (!engine.transport.playing) engine.transport.play();
+    await new Promise((r) => setTimeout(r, 300));
+    tl.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    const nearEnd = engine.transport.now();
+    tl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 400));
+    engine.transport.pause();
+    return {
+      role: tl.getAttribute('role'), focusable: tl.tabIndex === 0,
+      max: Number(tl.getAttribute('aria-valuemax')), text: tl.getAttribute('aria-valuetext'),
+      nearEnd, backToStart: engine.transport.now(),
+      live: document.querySelector('.mood').getAttribute('aria-live'),
+    };
+  });
+  check(slider.role === 'slider' && slider.focusable && slider.max > 0 && /of \d+:\d+/.test(slider.text || ''),
+    `timeline is a labelled slider (${slider.text})`);
+  check(slider.nearEnd > 60 && slider.backToStart < 5, `timeline keys seek (End -> ${slider.nearEnd.toFixed(0)}s, Home -> ${slider.backToStart.toFixed(1)}s)`);
+  check(slider.live === 'polite', 'movement changes are announced to screen readers');
 
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();

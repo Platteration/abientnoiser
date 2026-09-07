@@ -17,6 +17,10 @@
       this.enabled = true;
       this.last = 0;
       this.bins = null;
+      // honour a reduced-motion preference by drifting far more slowly
+      const mq = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)');
+      this.calm = !!(mq && mq.matches);
+      if (mq && mq.addEventListener) mq.addEventListener('change', (e) => { this.calm = e.matches; });
       this._frame = this._frame.bind(this);
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) this.stop(); else if (this.enabled) this.start();
@@ -77,7 +81,7 @@
       this.hue = (this.hue + dh * k + 360) % 360;
       this.intensity += (this.targetIntensity - this.intensity) * k;
       this.sample();
-      this.phase += dt * (0.05 + 0.09 * this.intensity);
+      this.phase += dt * (0.05 + 0.09 * this.intensity) * (this.calm ? 0.25 : 1);
       this.draw();
     }
 

@@ -2,13 +2,16 @@
 (function () {
   const AN = window.AN;
   const $ = (id) => document.getElementById(id);
-  const ACCENTS = { ambient: '#7cc4ff', lofi: '#f0a35e', focus: '#7ee0b8', space: '#b48cff', night: '#6aa0ff' };
+  const ACCENTS = {
+    ambient: '#7cc4ff', lofi: '#f0a35e', focus: '#7ee0b8', space: '#b48cff',
+    night: '#6aa0ff', nocturne: '#a8b4ff', synthwave: '#ff8ad1', jazz: '#e8c46a',
+  };
   const DURATIONS = [30, 45, 60, 90, 120];
   const SECTION_MINS = [2, 3, 4, 5, 6, 8];
 
   const state = {
     settings: null, plan: null, engine: null, recorder: null, sleepAt: null,
-    wavBusy: false, lastSectionIdx: -1, queue: [], queueIndex: 0, mixStartedAt: 0, sleepStopAt: null,
+    wavBusy: false, lastSectionIdx: -1, lastAriaSecond: -1, queue: [], queueIndex: 0, mixStartedAt: 0, sleepStopAt: null,
   };
   const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
@@ -146,7 +149,8 @@
 
   // ---------- visualiser ----------
   function initVisuals() {
-    const pref = AN.storage.prefs().visuals === 'off' ? 'off' : 'on';
+    const stored = AN.storage.prefs().visuals;
+    const pref = stored === 'on' || stored === 'off' ? stored : (prefersReducedMotion() ? 'off' : 'on');
     buildSelect($('visuals'), VISUALS.map((v) => v[0]), (v) => VISUALS.find((x) => x[0] === v)[1], pref);
     state.visual = new AN.Visualizer($('visual'), () => state.engine);
     state.visual.setEnabled(pref === 'on');
@@ -156,6 +160,10 @@
     const on = $('visuals').value === 'on';
     AN.storage.setPref('visuals', on ? 'on' : 'off');
     state.visual.setEnabled(on);
+  }
+
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
   // ---------- offline ----------
@@ -513,6 +521,14 @@
     const playing = !!(state.engine && state.engine.transport.playing);
     $('elapsed').textContent = AN.formatTime(pos);
     $('playhead').style.left = `${(pos / state.plan.duration) * 100}%`;
+    const second = Math.round(pos);
+    if (second !== state.lastAriaSecond) { // once a second, not once a frame
+      state.lastAriaSecond = second;
+      const tl = $('timeline');
+      tl.setAttribute('aria-valuemax', Math.round(state.plan.duration));
+      tl.setAttribute('aria-valuenow', second);
+      tl.setAttribute('aria-valuetext', `${AN.formatTime(pos)} of ${AN.formatTime(state.plan.duration)}, ${s.name}`);
+    }
     const remaining = s.end - pos;
     const next = state.plan.sections[(s.index + 1) % state.plan.sections.length];
     $('nextMood').textContent = playing ? `Next: ${next.name} in ${AN.formatTime(remaining)}` : 'Press play — or pick a movement below';
@@ -796,6 +812,17 @@
       const r = $('timeline').getBoundingClientRect();
       seekTo(((e.clientX - r.left) / r.width) * state.plan.duration);
     });
+    $('timeline').addEventListener('keydown', (e) => {
+      const keys = {
+        Home: () => seekTo(0),
+        End: () => seekTo(state.plan.duration - 1),
+        PageUp: () => nudge(-300),
+        PageDown: () => nudge(300),
+        ArrowUp: () => jumpMovement(1),
+        ArrowDown: () => jumpMovement(-1),
+      };
+      if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
+    });
     $('save').addEventListener('click', () => {
       const name = $('mixName').value.trim() || defaultMixName();
       AN.storage.save(name, state.settings);
@@ -847,7 +874,7 @@
   }
 
   window.AmbientNoiser = {
-    state, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro,
+    state, ACCENTS, ensureEngine, recompose, applySettings, setQuiet, jumpMovement, steer, setLock, setPomodoro,
     openEditor, setEdit, resetAllEdits, enqueue, advanceQueue, crossfadeTo, renderQueue,
   };
   document.addEventListener('DOMContentLoaded', init);
