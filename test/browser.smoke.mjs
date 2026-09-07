@@ -354,6 +354,42 @@ try {
   check(queue.queued === 2 && queue.rows === 2, `queue holds ${queue.queued} mixes`);
   check(queue.buildMs < 400, `building the incoming engine takes ${queue.buildMs.toFixed(0)} ms`);
 
+  // background tab: timers must keep running with no animation frames at all
+  const background = await page.evaluate(async () => {
+    const engine = AmbientNoiser.ensureEngine();
+    AmbientNoiser.state.queue = [];
+    if (!engine.transport.playing) engine.transport.play();
+    await new Promise((r) => setTimeout(r, 300));
+
+    const realRaf = window.requestAnimationFrame;
+    let frames = 0;
+    window.requestAnimationFrame = () => { frames++; return 0; }; // a hidden tab grants none
+    await new Promise((r) => setTimeout(r, 400));
+
+    // focus timer must still change phase
+    AmbientNoiser.setPomodoro(25);
+    AmbientNoiser.state.pomo.endsAt = Date.now() - 1;
+    await new Promise((r) => setTimeout(r, 900));
+    const pomoAdvanced = AmbientNoiser.state.pomo.phase === 'break';
+    AmbientNoiser.setPomodoro(0);
+
+    // sleep timer must still fire, and fade rather than cut
+    AmbientNoiser.state.sleepAt = Date.now() - 1;
+    await new Promise((r) => setTimeout(r, 900));
+    const fading = AmbientNoiser.state.sleepStopAt !== null;
+    const gain = engine.graph.master.gain.value;
+    AmbientNoiser.state.sleepStopAt = Date.now() - 1; // jump to the end of the fade
+    await new Promise((r) => setTimeout(r, 900));
+    const stopped = !AmbientNoiser.state.engine.transport.playing;
+
+    window.requestAnimationFrame = realRaf;
+    requestAnimationFrame(function loop() { requestAnimationFrame(loop); });
+    return { framesRequested: frames, pomoAdvanced, fading, stopped, gain, volume: AmbientNoiser.state.settings.volume };
+  });
+  check(background.pomoAdvanced && background.fading && background.stopped,
+    'focus and sleep timers keep running with no animation frames (a background tab)');
+  check(background.gain < background.volume, `the sleep timer fades out rather than cutting (gain ${background.gain.toFixed(3)} of ${background.volume})`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

@@ -390,6 +390,15 @@
 
     toggle() { this.playing ? this.pause() : this.play(); }
 
+    /** Start a slow fade to silence. The caller pauses when it reaches the end. */
+    fadeOut(seconds) {
+      const t = this.ctx.currentTime;
+      const m = this.engine.graph.master.gain;
+      m.cancelScheduledValues(t);
+      m.setValueAtTime(m.value, t);
+      m.linearRampToValueAtTime(0, t + Math.max(0.05, seconds));
+    }
+
     /** Fade out over `fade` seconds, then stop and release everything. */
     dispose(fade = 0) {
       const ctx = this.ctx, t = ctx.currentTime;
@@ -480,21 +489,10 @@
 
     _startTimer() {
       this._stopTimer();
-      const tick = () => this.schedule();
-      try {
-        const src = 'let id=null;onmessage=e=>{clearInterval(id);if(e.data>0)id=setInterval(()=>postMessage(0),e.data)}';
-        const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-        this.worker = new Worker(url);
-        this.worker.onmessage = tick;
-        this.worker.postMessage(120);
-        URL.revokeObjectURL(url);
-      } catch {
-        this.timer = setInterval(tick, 120);
-      }
+      this.ticker = AN.ticker(120, () => this.schedule());
     }
     _stopTimer() {
-      if (this.worker) { this.worker.terminate(); this.worker = null; }
-      if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      if (this.ticker) { this.ticker.stop(); this.ticker = null; }
     }
   }
 

@@ -8,7 +8,7 @@
 
   const state = {
     settings: null, plan: null, engine: null, recorder: null, sleepAt: null,
-    wavBusy: false, lastSectionIdx: -1, queue: [], queueIndex: 0, mixStartedAt: 0,
+    wavBusy: false, lastSectionIdx: -1, queue: [], queueIndex: 0, mixStartedAt: 0, sleepStopAt: null,
   };
   const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
@@ -17,6 +17,7 @@
   const VISUALS = [['on', 'On'], ['off', 'Off']];
   const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
   const CROSSFADES = [4, 8, 15, 30];
+  const SLEEP_FADE = 20; // seconds of fade before the sleep timer stops playback
 
   // ---------- init ----------
   function init() {
@@ -50,7 +51,8 @@
     bind();
     if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
-    requestAnimationFrame(tick);
+    requestAnimationFrame(tickUI);
+    state.logic = AN.ticker(500, tickLogic);
   }
 
   /** Export lengths, capped at the loop length, plus the whole loop. */
@@ -529,21 +531,47 @@
     }
   }
 
-  function tick() {
+  /** Drawing only. Paused by the browser in background tabs, which is fine. */
+  function tickUI() {
     const engine = state.engine;
-    const pos = engine ? engine.transport.now() : 0;
-    updateNow(pos, false);
+    updateNow(engine ? engine.transport.now() : 0, false);
     if (state.recorder && state.recorder.recording) {
       $('recStatus').textContent = `Recording… ${AN.formatTime(state.recorder.elapsed)}`;
     }
+    requestAnimationFrame(tickUI);
+  }
+
+  /** Everything that must keep working while the tab is hidden. */
+  function tickLogic() {
     tickPomodoro();
     tickQueue();
-    if (state.sleepAt && engine && engine.transport.playing) {
-      const left = (state.sleepAt - Date.now()) / 1000;
-      $('sleepStatus').textContent = `Stops in ${AN.formatTime(Math.max(0, left))}`;
-      if (left <= 0) { engine.transport.pause(); updatePlayButton(); state.sleepAt = null; $('sleep').value = '0'; $('sleepStatus').textContent = ''; toast('Sleep timer: stopped'); }
+    tickSleep();
+  }
+
+  function tickSleep() {
+    const engine = state.engine;
+    if (state.sleepStopAt) { // fading out
+      if (Date.now() >= state.sleepStopAt) {
+        state.sleepStopAt = null;
+        if (engine) { engine.transport.pause(); engine.setVolume(state.settings.volume, engine.ctx.currentTime); }
+        updatePlayButton();
+        $('sleepStatus').textContent = '';
+        toast('Sleep timer: stopped');
+      } else {
+        $('sleepStatus').textContent = `Fading out… ${AN.formatTime((state.sleepStopAt - Date.now()) / 1000)}`;
+      }
+      return;
     }
-    requestAnimationFrame(tick);
+    if (!state.sleepAt || !engine || !engine.transport.playing) return;
+    const left = (state.sleepAt - Date.now()) / 1000;
+    if (left > 0) {
+      $('sleepStatus').textContent = `Stops in ${AN.formatTime(left)}`;
+      return;
+    }
+    state.sleepAt = null;
+    $('sleep').value = '0';
+    engine.transport.fadeOut(SLEEP_FADE);
+    state.sleepStopAt = Date.now() + SLEEP_FADE * 1000;
   }
 
   // ---------- per-movement editing ----------
@@ -757,6 +785,10 @@
     $('pomodoro').addEventListener('change', () => setPomodoro(Number($('pomodoro').value)));
     $('sleep').addEventListener('change', () => {
       const min = Number($('sleep').value);
+      if (state.sleepStopAt && state.engine) { // cancel a fade already under way
+        state.sleepStopAt = null;
+        state.engine.setVolume(state.settings.volume, state.engine.ctx.currentTime);
+      }
       state.sleepAt = min ? Date.now() + min * 60000 : null;
       $('sleepStatus').textContent = min ? `Stops in ${AN.formatTime(min * 60)}` : '';
     });

@@ -2,7 +2,7 @@
 const VERSION = 'ambient-noiser-v2';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
-  './js/prng.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',
+  './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',
   './js/audio/graph.js', './js/audio/synths.js', './js/audio/drums.js', './js/audio/ambience.js',
   './js/audio/engine.js', './js/audio/recorder.js',
 ];
