@@ -30,7 +30,8 @@ try {
   await page.waitForSelector('.seg');
 
   check((await page.$$('.seg')).length >= 10, 'timeline renders movements');
-  check((await page.$$('.fader')).length === 13, 'mixer shows all layers');
+  const expectedFaders = await page.evaluate(() => AN.MUSIC_LAYERS.length + AN.AMBIENCE_LAYERS.length);
+  check((await page.$$('.fader')).length === expectedFaders, `mixer shows all ${expectedFaders} layers`);
 
   // offline render of each style with plenty of environment sound
   const styles = await page.evaluate(() => Object.keys(AN.STYLES));
@@ -38,7 +39,8 @@ try {
     const r = await page.evaluate(async (style) => {
       const s = AN.defaultSettings(style);
       s.seed = 'smoke-' + style;
-      Object.assign(s.levels, { rain: 0.5, thunder: 0.5, wind: 0.4, waves: 0.4, fire: 0.4, birds: 0.5, crickets: 0.4, vinyl: 0.4, melody: 0.8, arp: 0.8 });
+      for (const l of AN.AMBIENCE_LAYERS) s.levels[l.id] = 0.4;
+      Object.assign(s.levels, { melody: 0.8, arp: 0.8 });
       const sr = 22050, seconds = 24;
       const ctx = new OfflineAudioContext(2, seconds * sr, sr);
       const plan = AN.compose(s);

@@ -33,6 +33,7 @@
       this.nodes = [];
     }
     setSection(section, t) {
+      this.section = section;
       this.mult = (section.ambience && section.ambience[this.id]) || 1;
       this.layer.input.gain.setTargetAtTime(this.mult, t, 4);
       this.onSection(section, t);
@@ -302,8 +303,147 @@
     }
   }
 
+  // ---------------- Café murmur ----------------
+  class Cafe extends Texture {
+    sendLevel() { return 0.16; }
+    build(t) {
+      const c = this.ctx;
+      // room tone
+      const src = this.keep(this.graph.noiseSource('brown', t));
+      const lp = this.keep(c.createBiquadFilter()); lp.type = 'lowpass'; lp.frequency.value = 620; lp.Q.value = 0.5;
+      const g = this.keep(c.createGain()); g.gain.value = 0.22;
+      src.connect(lp); lp.connect(g); g.connect(this.layer.input);
+      // speech band: pink noise through two formant-ish peaks, wobbled to suggest voices
+      const src2 = this.keep(this.graph.noiseSource('pink', t));
+      const f1 = this.keep(c.createBiquadFilter()); f1.type = 'bandpass'; f1.frequency.value = 480; f1.Q.value = 3.5;
+      const f2 = this.keep(c.createBiquadFilter()); f2.type = 'bandpass'; f2.frequency.value = 1150; f2.Q.value = 4.5;
+      const vg = this.keep(c.createGain()); vg.gain.value = 0.5;
+      src2.connect(f1); src2.connect(f2); f1.connect(vg); f2.connect(vg); vg.connect(this.layer.input);
+      this.vg = vg; this.f1 = f1; this.f2 = f2;
+      for (const [rate, depth, target] of [[3.1, 90, f1.frequency], [2.3, 160, f2.frequency], [0.7, 0.18, vg.gain]]) {
+        const lfo = this.keep(c.createOscillator()); lfo.frequency.value = rate;
+        const lg = this.keep(c.createGain()); lg.gain.value = depth;
+        lfo.connect(lg); lg.connect(target); lfo.start(t);
+      }
+    }
+    tick(p0, p1, toCtx, rng) {
+      // cups, saucers and the espresso machine
+      const n = rng.poisson(0.6 * this.mult * (p1 - p0));
+      for (let i = 0; i < n; i++) {
+        const t = toCtx(rng.float(p0, p1));
+        if (rng.bool(0.12)) { // steam hiss
+          this.burst(t, rng.float(0.5, 1.4), 'white', 'highpass', 4200, 0.7, rng.float(0.03, 0.07), rng.float(-0.5, 0.5));
+        } else {
+          const f = rng.float(2200, 5200);
+          this.burst(t, rng.float(0.05, 0.16), 'white', 'bandpass', f, 22, rng.float(0.05, 0.14), rng.float(-0.7, 0.7));
+        }
+      }
+    }
+  }
+
+  // ---------------- Train interior ----------------
+  class Train extends Texture {
+    sendLevel() { return 0.06; }
+    build(t) {
+      const c = this.ctx;
+      const src = this.keep(this.graph.noiseSource('brown', t));
+      const lp = this.keep(c.createBiquadFilter()); lp.type = 'lowpass'; lp.frequency.value = 150; lp.Q.value = 1.1;
+      const g = this.keep(c.createGain()); g.gain.value = 0.38;
+      src.connect(lp); lp.connect(g); g.connect(this.layer.input);
+      // wheel hiss
+      const src2 = this.keep(this.graph.noiseSource('pink', t));
+      const bp = this.keep(c.createBiquadFilter()); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.6;
+      const g2 = this.keep(c.createGain()); g2.gain.value = 0.07;
+      src2.connect(bp); bp.connect(g2); g2.connect(this.layer.input);
+      // slow sway
+      const lfo = this.keep(c.createOscillator()); lfo.frequency.value = 0.09;
+      const lg = this.keep(c.createGain()); lg.gain.value = 0.12;
+      lfo.connect(lg); lg.connect(g.gain); lfo.start(t);
+      this.nextJoint = null;
+    }
+    tick(p0, p1, toCtx, rng) {
+      // rail joints: pairs of thumps, roughly every 1.6 s
+      if (this.nextJoint === null || this.nextJoint < p0 - 5) this.nextJoint = p0 + rng.float(0, 1.6);
+      while (this.nextJoint < p1) {
+        const t0 = toCtx(this.nextJoint);
+        for (const [off, vel] of [[0, 1], [0.13, 0.7]]) {
+          this.burst(t0 + off, 0.05, 'brown', 'lowpass', 190, 1.4, 0.2 * vel * this.mult, off ? 0.25 : -0.25);
+        }
+        this.nextJoint += rng.float(1.45, 1.75);
+      }
+    }
+  }
+
+  // ---------------- Creek ----------------
+  class Creek extends Texture {
+    sendLevel() { return 0.12; }
+    build(t) {
+      const c = this.ctx;
+      const src = this.keep(this.graph.noiseSource('white', t));
+      const bp = this.keep(c.createBiquadFilter()); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.5;
+      const hp = this.keep(c.createBiquadFilter()); hp.type = 'highpass'; hp.frequency.value = 700;
+      const g = this.keep(c.createGain()); g.gain.value = 0.13;
+      src.connect(hp); hp.connect(bp); bp.connect(g); g.connect(this.layer.input);
+      const lfo = this.keep(c.createOscillator()); lfo.frequency.value = 0.17;
+      const lg = this.keep(c.createGain()); lg.gain.value = 420;
+      lfo.connect(lg); lg.connect(bp.frequency); lfo.start(t);
+    }
+    tick(p0, p1, toCtx, rng) {
+      // bubbles: short upward pitch sweeps
+      const n = rng.poisson(6 * this.mult * (p1 - p0));
+      for (let i = 0; i < n; i++) {
+        const c = this.ctx, g = this.graph;
+        const t = Math.max(toCtx(rng.float(p0, p1)), c.currentTime);
+        const o = c.createOscillator(); o.type = 'sine';
+        const env = c.createGain();
+        const p = g.panner(rng.float(-0.8, 0.8));
+        const f0 = rng.float(500, 1500), dur = rng.float(0.03, 0.09);
+        o.frequency.setValueAtTime(f0, t);
+        o.frequency.exponentialRampToValueAtTime(f0 * rng.float(1.6, 3), t + dur);
+        env.gain.setValueAtTime(0, t);
+        env.gain.linearRampToValueAtTime(rng.float(0.03, 0.09), t + dur * 0.3);
+        env.gain.linearRampToValueAtTime(0, t + dur);
+        o.connect(env); env.connect(p); p.connect(this.layer.input);
+        o.start(t); o.stop(t + dur + 0.02);
+        g.track(o, env, p);
+      }
+    }
+  }
+
+  // ---------------- Wind chimes ----------------
+  /* Tuned to the movement's own key, so the chimes agree with the music. */
+  class Chimes extends Texture {
+    sendLevel() { return 0.5; }
+    tick(p0, p1, toCtx, rng) {
+      const clusters = rng.poisson((5 / 60) * this.mult * (p1 - p0));
+      for (let i = 0; i < clusters; i++) this.cluster(toCtx(rng.float(p0, p1)), rng);
+    }
+    cluster(t, rng) {
+      const sec = this.section;
+      const T = AN.theory;
+      const keyMidi = 60 + (sec ? sec.keyRoot : 0);
+      const mode = sec ? sec.mode : 'major';
+      // pentatonic subset of the mode reads as "tuned chimes" rather than a scale run
+      const all = T.scaleNotes(keyMidi, mode, 72, 91);
+      const notes = all.filter((m) => [0, 2, 4, 7, 9].includes(((m - keyMidi) % 12 + 12) % 12));
+      const pool = notes.length ? notes : all;
+      if (!pool.length) return;
+      const n = rng.int(2, 7);
+      let cursor = t;
+      for (let i = 0; i < n; i++) {
+        AN.synths.bell(this.graph, this.layer, {
+          midi: rng.pick(pool), t: cursor, vel: rng.float(0.12, 0.34) * (1 - i / (n * 2)), pan: rng.float(-0.8, 0.8),
+        });
+        cursor += rng.float(0.09, 0.42);
+      }
+    }
+  }
+
   AN.ambience = {
-    classes: { rain: Rain, thunder: Thunder, wind: Wind, waves: Waves, fire: Fire, birds: Birds, crickets: Crickets, vinyl: Vinyl },
+    classes: {
+      rain: Rain, thunder: Thunder, wind: Wind, waves: Waves, creek: Creek, fire: Fire,
+      birds: Birds, crickets: Crickets, chimes: Chimes, cafe: Cafe, train: Train, vinyl: Vinyl,
+    },
     create(graph) {
       const out = {};
       for (const id of Object.keys(this.classes)) out[id] = new this.classes[id](graph, id);

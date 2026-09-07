@@ -166,6 +166,47 @@
     graph.track(o1, filt, out, p);
   };
 
+  /** Acoustic-ish piano: inharmonic partials, hammer thump, register-dependent decay. */
+  S.piano = function (graph, layer, { midi, t, dur = 1.2, vel = 0.6, pan = 0 }) {
+    const c = graph.ctx;
+    t = Math.max(t, c.currentTime);
+    const { out, p } = output(graph, layer, pan);
+    const f = mtof(midi);
+    const decay = Math.max(0.7, 5.6 - (midi - 36) * 0.055); // low strings ring longer
+    const end = t + Math.min(11, dur + decay * 1.8);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.4;
+    lp.frequency.setValueAtTime(Math.min(11000, 1600 + 6500 * vel), t);
+    lp.frequency.setTargetAtTime(650 + 500 * vel, t, decay * 0.5);
+    lp.connect(out);
+
+    const partials = [[1, 1, 1], [2.001, 0.4, 0.72], [3.005, 0.17, 0.52], [4.012, 0.08, 0.38], [5.02, 0.035, 0.28]];
+    partials.forEach(([ratio, amp, dfac], i) => {
+      if (f * ratio > 15000) return;
+      const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = f * ratio;
+      o.detune.value = i * 1.2;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(amp, t + 0.005);
+      g.gain.setTargetAtTime(0, t + 0.005, (decay * dfac) / 3);
+      o.connect(g); g.connect(lp);
+      o.start(t); o.stop(end);
+      if (i === 0) graph.track(o, g, lp, out, p); else graph.track(o, g);
+    });
+
+    const n = graph.noiseSource('white', t, true); // hammer
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(9000, f * 3); bp.Q.value = 1.1;
+    const ng = c.createGain();
+    ng.gain.setValueAtTime(0.18 * vel, t);
+    ng.gain.setTargetAtTime(0, t, 0.011);
+    n.connect(bp); bp.connect(ng); ng.connect(out);
+    n.stop(t + 0.18);
+    graph.track(n, bp, ng);
+
+    out.gain.setValueAtTime(0.2 * vel, t);
+    out.gain.setValueAtTime(0.2 * vel, t + dur);
+    out.gain.setTargetAtTime(0, t + dur, 0.3); // damper
+  };
+
   /** Bass: sine fundamental + soft triangle octave, gentle lowpass. */
   S.bass = function (graph, layer, { midi, t, dur = 0.5, vel = 0.7, soft = false }) {
     const c = graph.ctx;

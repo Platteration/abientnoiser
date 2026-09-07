@@ -69,6 +69,7 @@
     // ---------- section handling ----------
     enterSection(section, t, fromSeek, pos) {
       this.section = section;
+      this.lastBass = null;
       const g = this.graph;
       const tc = fromSeek ? 0.02 : 2.5;
       g.setCharacter(this.plan.lofi, section.brightness, t);
@@ -113,17 +114,16 @@
       const rng = AN.rng(seed, 'step', section.index, bar, sixteenth);
       const chord = this.chordAt(section, stepIndex);
       const chordSteps = section.chordBars * 16;
-      const lofi = this.plan.lofi;
       const swingT = sixteenth % 2 === 1 ? t + (section.swing - 0.5) * 2 * stepLen : t;
 
       if (stepIndex % chordSteps === 0 && (this.levels.pads || 0) > 0) this.playChord(chord, t, chordSteps * stepLen, section, rng);
-      if (lofi && section.chordInstr === 'ep' && this.barPlan.stab && sixteenth === this.barPlan.stabStep && (this.levels.pads || 0) > 0) {
-        this.epChord(chord.voicing, swingT, stepLen * 3, 0.2, rng);
+      if (section.comp && this.barPlan.stab && sixteenth === this.barPlan.stabStep && (this.levels.pads || 0) > 0) {
+        this.compChord(chord.voicing, swingT, stepLen * 3, 0.2, section, rng);
       }
       if ((this.levels.bass || 0) > 0 && (section.music.bass || 0) > 0) this.playBass(chord, ev, swingT, rng);
       if ((this.levels.melody || 0) > 0 && (section.music.melody || 0) > 0 && this.barPlan.melodyActive) this.playMelody(chord, ev, swingT, rng);
       if ((this.levels.arp || 0) > 0 && (section.music.arp || 0) > 0) this.playArp(chord, ev, rng);
-      if (lofi && (this.levels.drums || 0) > 0 && section.drumPattern !== 'off') {
+      if (section.kit && (this.levels.drums || 0) > 0 && section.drumPattern !== 'off') {
         AN.drums.step(this.graph, this.graph.layers.drums, { t, stepLen, section, sixteenth, bar, rng: AN.rng(seed, 'drums', section.index, bar, sixteenth), swing: section.swing });
       }
       // ambience one-shots for this step's window
@@ -134,10 +134,19 @@
       }
     }
 
+    /** One note of any melodic instrument, on any layer. */
+    voice(layer, instr, opts) {
+      const g = this.graph;
+      if (instr === 'bell') S.bell(g, layer, opts);
+      else if (instr === 'ep') S.ep(g, layer, opts);
+      else if (instr === 'piano') S.piano(g, layer, opts);
+      else S.pluck(g, layer, opts);
+    }
+
     playChord(chord, t, dur, section, rng) {
       const g = this.graph, layer = g.layers.pads;
-      if (section.chordInstr === 'ep') {
-        this.epChord(chord.voicing, t, dur * 0.9, 0.3, rng);
+      if (section.chordInstr !== 'pad') {
+        this.compChord(chord.voicing, t, dur * 0.9, 0.3, section, rng);
         S.pad(g, layer, { midis: chord.voicing, t, dur, brightness: section.brightness * 0.6, level: 0.04, wave: 'triangle', rng });
       } else {
         const dark = section.brightness < 0.35;
@@ -148,15 +157,22 @@
       }
     }
 
-    epChord(voicing, t, dur, vel, rng) {
-      voicing.forEach((m, i) => S.ep(this.graph, this.graph.layers.pads, { midi: m, t: t + i * 0.012 + rng.float(0, 0.01), dur, vel: vel * rng.float(0.85, 1.05), pan: (i / voicing.length - 0.5) * 0.5 }));
+    /** Rolled chord on the comping instrument. */
+    compChord(voicing, t, dur, vel, section, rng) {
+      const instr = section.chordInstr === 'pad' ? 'ep' : section.chordInstr;
+      const roll = instr === 'piano' ? 0.02 : 0.012;
+      voicing.forEach((m, i) => this.voice(this.graph.layers.pads, instr, {
+        midi: m, t: t + i * roll + rng.float(0, 0.01), dur,
+        vel: vel * rng.float(0.85, 1.05), pan: (i / voicing.length - 0.5) * 0.5,
+      }));
     }
 
     playBass(chord, ev, swingT, rng) {
       const { section, sixteenth, stepIndex, stepLen } = ev;
       const layer = this.graph.layers.bass;
       const rootMidi = T.rootInRange(chord.tones[0], chord.keyMidi, 36);
-      if (!this.plan.lofi) {
+      if (section.bassStyle === 'walk') return this.walkBass(chord, ev, swingT, rng);
+      if (section.bassStyle !== 'pattern') {
         const chordSteps = section.chordBars * 16;
         if (stepIndex % chordSteps === 0) S.bass(this.graph, layer, { midi: rootMidi, t: ev.t, dur: chordSteps * stepLen * 0.95, vel: 0.4, soft: true });
         return;
@@ -172,11 +188,41 @@
       S.bass(this.graph, layer, { midi, t: swingT, dur: Math.max(0.15, holdSteps * stepLen * 0.85), vel: 0.6 + rng.float(-0.05, 0.1) });
     }
 
+    /** Walking bass: root on the chord change, chord and passing tones between,
+     *  then a chromatic approach into the next chord. */
+    walkBass(chord, ev, swingT, rng) {
+      const { section, sixteenth, stepIndex, stepLen } = ev;
+      if (sixteenth % 4 !== 0) return;
+      const low = 36;
+      const chordSteps = section.chordBars * 16;
+      const posInChord = stepIndex % chordSteps;
+      const scale = T.scaleNotes(chord.keyMidi, section.mode, low, low + 17);
+      const rootMidi = T.rootInRange(chord.tones[0], chord.keyMidi, low);
+      const chordNotes = scale.filter((m) => chord.tones.some((tn) => ((m - chord.keyMidi - tn) % 12 + 12) % 12 === 0));
+      let midi;
+      if (posInChord === 0 || this.lastBass == null) {
+        midi = rootMidi;
+      } else if (posInChord + 4 >= chordSteps) {
+        const next = this.chordAt(section, stepIndex + 4);
+        const nextRoot = T.rootInRange(next.tones[0], next.keyMidi, low);
+        midi = nextRoot + rng.pick([-1, 1, -2, 2]); // approach from a step away
+      } else {
+        const near = chordNotes.concat(scale).filter((m) => Math.abs(m - this.lastBass) <= 5 && m !== this.lastBass);
+        midi = near.length ? rng.pick(near) : rootMidi;
+      }
+      if (midi < low) midi += 12;
+      if (midi > low + 19) midi -= 12;
+      this.lastBass = midi;
+      S.bass(this.graph, this.graph.layers.bass, {
+        midi, t: swingT, dur: stepLen * 4 * 0.92, vel: 0.5 + rng.float(-0.05, 0.08),
+      });
+    }
+
     playMelody(chord, ev, swingT, rng) {
       const { section, sixteenth, stepLen } = ev;
       if (sixteenth % 2 === 1) return;
       const instr = section.melodyInstr;
-      const rate = instr === 'bell' ? 0.5 : instr === 'ep' ? 0.55 : 0.45;
+      const rate = instr === 'bell' ? 0.5 : instr === 'ep' ? 0.55 : instr === 'piano' ? 0.52 : 0.45;
       const prob = rate * (0.35 + 0.65 * section.density) * (sixteenth % 4 === 0 ? 1 : 0.5) * (0.4 + 0.6 * section.music.melody);
       if (!rng.bool(prob)) return;
       const lo = section.center + 3, hi = section.center + 20;
@@ -199,12 +245,11 @@
       const vel = Math.max(0.15, Math.min(0.95, 0.32 + 0.45 * section.intensity + rng.gauss(0, 0.06)));
       const pan = rng.float(-0.35, 0.35);
       const layer = this.graph.layers.melody;
-      if (instr === 'bell') S.bell(this.graph, layer, { midi: note, t: swingT, vel, pan });
-      else if (instr === 'ep') S.ep(this.graph, layer, { midi: note, t: swingT, dur: rng.pick([1, 2, 2, 3, 4]) * stepLen * 2, vel, pan });
-      else S.pluck(this.graph, layer, { midi: note, t: swingT, vel, pan });
-      if (instr === 'ep' && rng.bool(0.12)) { // occasional harmony note a third/sixth below
+      const dur = rng.pick([1, 2, 2, 3, 4]) * stepLen * 2;
+      this.voice(layer, instr, { midi: note, t: swingT, dur, vel, pan });
+      if ((instr === 'ep' || instr === 'piano') && rng.bool(0.14)) { // harmony note a third below
         const i = scale.indexOf(note);
-        if (i >= 2) S.ep(this.graph, layer, { midi: scale[i - 2], t: swingT + 0.01, dur: stepLen * 3, vel: vel * 0.7, pan: -pan });
+        if (i >= 2) this.voice(layer, instr, { midi: scale[i - 2], t: swingT + 0.012, dur: dur * 0.8, vel: vel * 0.7, pan: -pan });
       }
     }
 
@@ -219,7 +264,9 @@
       else if (section.arpPattern === 1) { const cyc = 2 * n - 2; const j = k % cyc; idx = j < n ? j : cyc - j; }
       else idx = AN.rng(this.plan.seed, 'arp', section.index, k).int(0, n - 1);
       const vel = (sixteenth === 0 ? 0.42 : 0.3) * (0.7 + 0.5 * section.intensity) + rng.float(-0.03, 0.03);
-      S.pluck(this.graph, this.graph.layers.arp, { midi: notes[idx], t: ev.t + rng.gauss(0, 0.002), vel, pan: (idx / n - 0.5) * 0.6 });
+      this.voice(this.graph.layers.arp, section.arpInstr, {
+        midi: notes[idx], t: ev.t + rng.gauss(0, 0.002), dur: stepLen * 2, vel, pan: (idx / n - 0.5) * 0.6,
+      });
     }
   }
 
