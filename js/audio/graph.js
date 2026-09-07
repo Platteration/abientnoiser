@@ -83,6 +83,8 @@
       this.flutterGain = c.createGain(); this.flutterGain.gain.value = 0;
       this.flutter.connect(this.flutterGain); this.flutterGain.connect(this.tape.delayTime);
       try { this.wow.start(0); this.flutter.start(0); } catch { /* already started */ }
+      this.tapeRunning = true;
+      this.wow.onended = () => { this.tapeRunning = false; };
 
       this.lofiFilter = c.createBiquadFilter();
       this.lofiFilter.type = 'lowpass'; this.lofiFilter.Q.value = 0.4;
@@ -262,6 +264,16 @@
         for (const n of cleanup) { try { n.disconnect(); } catch { /* already gone */ } }
       };
       return src;
+    }
+
+    /** Final teardown. The tape oscillators are deliberately not tracked — killAll
+     *  runs on every pause and an oscillator cannot be restarted — so they are
+     *  stopped here, once, when the graph is really finished with. */
+    dispose(t) {
+      if (this.disposed) return;
+      this.disposed = true;
+      for (const o of [this.wow, this.flutter]) { try { o.stop(t); } catch { /* already stopped */ } }
+      try { this.comp.disconnect(); } catch { /* already gone */ }
     }
 
     killAll(t) {

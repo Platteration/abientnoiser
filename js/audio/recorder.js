@@ -62,6 +62,9 @@
     const preroll = opts.preroll == null ? 20 : opts.preroll;
     const chunkLen = Math.max(30, Math.min(seconds, opts.chunkSeconds || 300));
     const chunkCount = Math.max(1, Math.ceil(seconds / chunkLen));
+    // take a copy: the caller's settings are live, and a fader moved mid-export
+    // would otherwise step the level at a chunk boundary
+    settings = JSON.parse(JSON.stringify(settings));
     const plan = AN.compose(settings);
     const parts = [];
     let frames = 0;

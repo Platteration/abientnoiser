@@ -25,12 +25,16 @@
     stop(t) {
       if (!this.running) return;
       this.running = false;
-      for (const n of this.nodes) {
-        try { if (typeof n.stop === 'function') n.stop(t + 0.05); } catch { /* ignore */ }
-        // disconnect a moment later so tails through gain ramps aren't cut mid-sample
-        if (typeof n.stop !== 'function') { try { n.disconnect(); } catch { /* ignore */ } }
-      }
+      const nodes = this.nodes;
       this.nodes = [];
+      for (const n of nodes) {
+        if (typeof n.stop === 'function') { try { n.stop(t + 0.05); } catch { /* not started */ } }
+      }
+      // hold the rest of the chain together until then, so a fade to zero is heard
+      const wait = Math.max(0, (t - this.ctx.currentTime + 0.15) * 1000);
+      setTimeout(() => {
+        for (const n of nodes) { try { n.disconnect(); } catch { /* already gone */ } }
+      }, wait);
     }
     setSection(section, t) {
       this.section = section;
@@ -268,7 +272,9 @@
     tick(p0, p1, toCtx, rng) {
       if (!this.voices) return;
       this.voices.forEach((v, i) => {
-        if (v.next === null || v.next < p0 - 5) v.next = p0 + rng.float(0, 1.5);
+        // re-seed whenever the cursor is outside this window, in either direction:
+        // the loop seam and a locked movement both send piece time backwards
+        if (v.next === null || v.next < p0 - 5 || v.next > p1 + 30) v.next = p0 + rng.float(0, 1.5);
         while (v.next < p1) {
           const on = rng.float(0.35, 1.1), off = rng.float(0.25, 1.5) / this.mult;
           const t = toCtx(v.next), level = rng.float(0.05, 0.11) * (i === 2 ? 0.6 : 1);
@@ -365,7 +371,9 @@
     }
     tick(p0, p1, toCtx, rng) {
       // rail joints: pairs of thumps, roughly every 1.6 s
-      if (this.nextJoint === null || this.nextJoint < p0 - 5) this.nextJoint = p0 + rng.float(0, 1.6);
+      if (this.nextJoint === null || this.nextJoint < p0 - 5 || this.nextJoint > p1 + 30) {
+        this.nextJoint = p0 + rng.float(0, 1.6);
+      }
       while (this.nextJoint < p1) {
         const t0 = toCtx(this.nextJoint);
         for (const [off, vel] of [[0, 1], [0.13, 0.7]]) {

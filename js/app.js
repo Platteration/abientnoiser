@@ -11,7 +11,8 @@
 
   const state = {
     settings: null, plan: null, engine: null, recorder: null, sleepAt: null,
-    wavBusy: false, lastSectionIdx: -1, lastAriaSecond: -1, queue: [], queueIndex: 0, mixStartedAt: 0, sleepStopAt: null,
+    wavBusy: false, lastSectionIdx: -1, lastAriaSecond: -1, queue: [], queueIndex: 0,
+    mixStartedAt: performance.now(), sleepStopAt: null,
   };
   const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
@@ -85,7 +86,7 @@
     for (const v of values) {
       const o = document.createElement('option');
       o.value = v; o.textContent = label(v);
-      if (Number(v) === Number(current)) o.selected = true;
+      if (String(v) === String(current)) o.selected = true; // values may be strings; Number() would compare NaN
       sel.appendChild(o);
     }
   }
@@ -605,7 +606,8 @@
     if (state.sleepStopAt) { // fading out
       if (Date.now() >= state.sleepStopAt) {
         state.sleepStopAt = null;
-        if (engine) { engine.transport.pause(); engine.setVolume(state.settings.volume, engine.ctx.currentTime); }
+        // leave the master at zero: play() ramps it back up from silence
+        if (engine) engine.transport.pause();
         updatePlayButton();
         $('sleepStatus').textContent = '';
         toast('Sleep timer: stopped');
@@ -753,7 +755,11 @@
       if (blob) AN.download(blob, `${fileStem()}.${state.recorder.extension()}`);
       return;
     }
-    if (!engine.transport.playing) { engine.transport.play(); updatePlayButton(); }
+    if (!engine.transport.playing) {
+      state.mixStartedAt = performance.now();
+      engine.transport.play();
+      updatePlayButton();
+    }
     try {
       state.recorder.start();
       $('record').textContent = '■ Stop';

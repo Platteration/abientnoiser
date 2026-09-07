@@ -492,6 +492,67 @@ try {
   check(preset.count >= 8 && preset.rain > 0 && preset.thunder > 0 && preset.cafe === 0 && preset.faderMatches && preset.silent,
     `${preset.count} environment presets set the faders and clear what they do not name`);
 
+  // string-valued selects must restore their stored value, and not overwrite it on load
+  const prefsPage = await browser.newPage();
+  await prefsPage.goto(`http://localhost:${port}/`);
+  await prefsPage.waitForSelector('.seg');
+  await prefsPage.selectOption('#theme', 'dark');
+  await prefsPage.selectOption('#visuals', 'off');
+  await prefsPage.selectOption('#daypart', 'night');
+  await prefsPage.reload();
+  await prefsPage.waitForSelector('.seg');
+  const restored = await prefsPage.evaluate(() => ({
+    theme: document.getElementById('theme').value,
+    visuals: document.getElementById('visuals').value,
+    daypart: document.getElementById('daypart').value,
+    storedTheme: AN.storage.prefs().theme,
+    storedVisuals: AN.storage.prefs().visuals,
+    applied: document.documentElement.dataset.theme,
+    visualHidden: document.getElementById('visual').hidden,
+  }));
+  await prefsPage.close();
+  check(restored.theme === 'dark' && restored.storedTheme === 'dark' && restored.applied === 'dark',
+    `theme survives a reload (select ${restored.theme}, stored ${restored.storedTheme})`);
+  check(restored.visuals === 'off' && restored.storedVisuals === 'off' && restored.visualHidden,
+    'the visuals choice survives a reload and matches what is drawn');
+  check(restored.daypart === 'night', 'time of day survives a reload');
+
+  // ambience one-shots keep going after the loop seam sends piece time backwards
+  const wrapped2 = await page.evaluate(async () => {
+    const s = AN.defaultSettings('ambient');
+    s.seed = 'wrap-amb'; s.durationMin = 5; s.sectionMin = 1;
+    s.levels.crickets = 0.6; s.levels.train = 0.6;
+    const ctx = new OfflineAudioContext(1, 8000 * 40, 8000);
+    const plan = AN.compose(s);
+    const engine = new AN.Engine(ctx, plan, s, { offline: true });
+    engine.transport.renderRange(20, plan.duration - 10); // straddle the loop seam
+    const { train, crickets } = engine.textures;
+    // after wrapping, each texture's cursor must have followed piece time back to the start
+    return {
+      before: { train: train.nextJoint, crickets: crickets.voices && crickets.voices[0].next },
+      duration: plan.duration,
+    };
+  });
+  check(wrapped2.before.train != null && wrapped2.before.train < 30,
+    `rail joints re-seed after the loop seam (cursor back to ${wrapped2.before.train.toFixed(1)}s, not stuck near ${wrapped2.duration}s)`);
+  check(wrapped2.before.crickets != null && wrapped2.before.crickets < 30,
+    `crickets re-seed after the loop seam (cursor ${wrapped2.before.crickets.toFixed(1)}s)`);
+
+  // a discarded engine really lets go of its tape oscillators
+  const teardown = await page.evaluate(async () => {
+    const ctx = AmbientNoiser.state.engine.ctx;
+    const e = new AN.Engine(ctx, AmbientNoiser.state.plan, AmbientNoiser.state.settings, { output: AmbientNoiser.state.output });
+    const running = e.graph.tapeRunning;
+    e.transport.play({ fade: 0.1 });
+    await new Promise((r) => setTimeout(r, 200));
+    e.transport.dispose(0.1);
+    await new Promise((r) => setTimeout(r, 900));
+    e.graph.dispose(ctx.currentTime); // must be safe to call twice
+    return { running, stopped: e.graph.tapeRunning === false, disposed: e.graph.disposed, sources: e.graph.sources.size };
+  });
+  check(teardown.running && teardown.stopped && teardown.disposed && teardown.sources === 0,
+    'a discarded engine stops its tape oscillators and releases every source');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

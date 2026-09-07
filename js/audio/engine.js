@@ -414,7 +414,7 @@
         const now = ctx.currentTime;
         this.engine.graph.killAll(now);
         this.engine.stopTextures(now);
-        try { this.engine.graph.comp.disconnect(); } catch { /* already gone */ }
+        this.engine.graph.dispose(now);
       }, Math.max(100, fade * 1000 + 400));
     }
 
