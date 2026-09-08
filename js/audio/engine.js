@@ -420,18 +420,21 @@
       m.linearRampToValueAtTime(0, t + Math.max(0.05, seconds));
     }
 
-    /** Fade out over `fade` seconds, then stop and release everything. */
+    /** Fade out over `fade` seconds, then stop and release everything.
+     *  Scheduling continues throughout the fade: stopping it here would leave the
+     *  outgoing piece with only the lookahead already queued, so a long crossfade
+     *  would be mostly decaying tails instead of two pieces playing at once. */
     dispose(fade = 0) {
       const ctx = this.ctx, t = ctx.currentTime;
       const m = this.engine.graph.master.gain;
       m.cancelScheduledValues(t);
       m.setValueAtTime(m.value, t);
       m.linearRampToValueAtTime(0, t + Math.max(0.05, fade));
-      this.playing = false;
-      this._stopTimer();
       const gen = ++this.gen;
       setTimeout(() => {
         if (this.gen !== gen) return;
+        this.playing = false;
+        this._stopTimer();
         const now = ctx.currentTime;
         this.engine.graph.killAll(now);
         this.engine.stopTextures(now);

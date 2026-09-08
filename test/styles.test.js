@@ -65,3 +65,18 @@ test('movement names are unique within a plan', () => {
     }
   }
 });
+
+test('swing is a ratio where 0.5 is straight, never below', () => {
+  for (const id of Object.keys(AN.STYLES)) {
+    const [lo, hi] = AN.STYLES[id].swing;
+    assert.ok(lo >= 0.5 && hi >= lo && hi <= 0.8, `${id} declares swing ${lo}-${hi}; 0.5 is straight`);
+    // below 0.5 an odd sixteenth would be pulled earlier than the beat before it
+    const plan = AN.compose({ seed: 'swing', style: id, durationMin: 30, sectionMin: 3 });
+    for (const s of plan.sections) {
+      assert.ok(s.swing >= 0.5 && s.swing <= 0.8, `${id} section swing ${s.swing}`);
+      const stepLen = 60 / s.tempo / 4;
+      const shift = (s.swing - 0.5) * 2 * stepLen;
+      assert.ok(shift >= 0 && shift < stepLen, `${id} shifts an odd sixteenth by ${shift}s of a ${stepLen}s step`);
+    }
+  }
+});

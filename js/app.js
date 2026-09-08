@@ -513,6 +513,7 @@
   function seekTo(pos) {
     const engine = ensureEngine();
     if (!engine) return;
+    if (engine.transport.lock != null) setLock(false); // going somewhere else releases the repeat
     engine.transport.seek(pos);
     state.lastSectionIdx = -1;
   }

@@ -20,7 +20,13 @@ const server = http.createServer((req, res) => {
   req.on('error', () => {});
   res.on('error', () => {});
 
-  const url = decodeURIComponent(req.url.split('?')[0]);
+  let url;
+  try {
+    url = decodeURIComponent(req.url.split('?')[0]);
+  } catch { // a malformed percent-escape is a bad request, not a reason to fall over
+    res.writeHead(400);
+    return res.end('Bad request');
+  }
   let file = path.join(root, url === '/' ? 'index.html' : url);
   if (path.relative(root, file).startsWith('..')) {
     res.writeHead(403);

@@ -36,7 +36,7 @@
       desc: 'Slow evolving pads, soft bells, no beat.',
       tempo: [56, 68], chordBars: 2, chordSizes: [3, 4], center: 64,
       melodyInstr: 'bell', chordInstr: 'pad', arpInstr: 'pluck', bass: 'sustain', kit: null,
-      lofi: false, swing: [0, 0],
+      lofi: false, swing: [0.5, 0.5],
       modes: ['major', 'lydian', 'dorian', 'minor', 'mixolydian'],
       progressions: [[0, 5, 3, 4], [0, 3], [0, 5], [0, 2, 3, 5], [0, 1], [0, 6, 3, 5], [3, 0, 4, 5], [0, 4, 5, 3], [5, 3, 0, 4]],
       music: { pads: 1, melody: 0.55, arp: 0, bass: 0.5, drums: 0 },
@@ -60,7 +60,7 @@
       desc: 'Steady arpeggios over soft pads. Even, unobtrusive, made for work.',
       tempo: [84, 100], chordBars: 2, chordSizes: [3, 4], center: 66,
       melodyInstr: 'pluck', chordInstr: 'pad', arpInstr: 'pluck', bass: 'sustain', kit: null,
-      lofi: false, swing: [0, 0],
+      lofi: false, swing: [0.5, 0.5],
       modes: ['major', 'lydian', 'dorian', 'mixolydian'],
       progressions: [[0, 4, 5, 3], [0, 5, 3, 4], [0, 3], [5, 3, 0, 4], [0, 2, 5, 3], [0, 1, 0, 3]],
       music: { pads: 0.85, melody: 0.3, arp: 1, bass: 0.6, drums: 0 },
@@ -72,7 +72,7 @@
       desc: 'Vast drones, glassy tones, a very slow pulse of harmony.',
       tempo: [48, 58], chordBars: 4, chordSizes: [3], center: 60,
       melodyInstr: 'bell', chordInstr: 'pad', arpInstr: 'bell', bass: 'sustain', kit: null,
-      lofi: false, swing: [0, 0],
+      lofi: false, swing: [0.5, 0.5],
       modes: ['lydian', 'minor', 'dorian', 'phrygian'],
       progressions: [[0, 3], [0, 6], [0, 1], [0, 5, 3], [0, 4], [0, 2]],
       music: { pads: 1, melody: 0.35, arp: 0, bass: 0.3, drums: 0 },
@@ -84,7 +84,7 @@
       desc: 'Soft electric piano and pads under steady rain and distant thunder.',
       tempo: [60, 72], chordBars: 2, chordSizes: [4], center: 64,
       melodyInstr: 'ep', chordInstr: 'pad', arpInstr: 'pluck', bass: 'sustain', kit: null,
-      lofi: false, swing: [0, 0],
+      lofi: false, swing: [0.5, 0.5],
       modes: ['minor', 'dorian', 'major'],
       progressions: [[0, 5, 3, 4], [5, 3, 0, 4], [0, 3, 5, 4], [0, 6], [1, 4, 0, 0], [0, 2, 3, 4]],
       music: { pads: 1, melody: 0.55, arp: 0.35, bass: 0.6, drums: 0 },
@@ -96,7 +96,7 @@
       desc: 'Sparse piano over held strings. Slow, roomy and late.',
       tempo: [52, 64], chordBars: 2, chordSizes: [3, 4], center: 65,
       melodyInstr: 'piano', chordInstr: 'pad', arpInstr: 'piano', bass: 'sustain', kit: null,
-      lofi: false, swing: [0, 0],
+      lofi: false, swing: [0.5, 0.5],
       modes: ['minor', 'dorian', 'major', 'lydian'],
       progressions: [[0, 5, 3, 4], [0, 3, 4, 5], [5, 3, 0, 4], [0, 2, 5, 3], [1, 4, 0, 5], [0, 4, 5, 3]],
       music: { pads: 0.6, melody: 0.9, arp: 0.45, bass: 0.5, drums: 0 },
@@ -108,7 +108,7 @@
       desc: 'Warm analog pads, sub bass and a slow electronic pulse.',
       tempo: [84, 98], chordBars: 2, chordSizes: [3, 4], center: 67,
       melodyInstr: 'pluck', chordInstr: 'pad', arpInstr: 'pluck', bass: 'pattern', kit: 'electro',
-      lofi: true, swing: [0, 0],
+      lofi: true, swing: [0.5, 0.5],
       modes: ['minor', 'dorian', 'lydian', 'major'],
       progressions: [[5, 3, 0, 4], [0, 5, 3, 4], [3, 4, 5, 0], [0, 6, 5, 4], [5, 0, 3, 4], [0, 4, 5, 5]],
       music: { pads: 1, melody: 0.5, arp: 0.85, bass: 0.9, drums: 0.8 },
@@ -274,7 +274,9 @@
     // --- global musical identity
     const keyRootBase = rng.int(0, 11);
     const tempoBase = rng.int(style.tempo[0], style.tempo[1]);
-    const swing = rng.float(style.swing[0], style.swing[1]);
+    // 0.5 is straight; anything above delays the odd sixteenths. Guard against a
+    // style declaring 0 for "no swing", which would pull them a whole step early.
+    const swing = clamp(rng.float(style.swing[0], style.swing[1]), 0.5, 0.8);
     const peaks = n >= 9 ? rng.weighted([[1, 2], [2, 1]]) : 1;
 
     // --- assign moods along an intensity arc (low at both ends so the loop seam is calm)

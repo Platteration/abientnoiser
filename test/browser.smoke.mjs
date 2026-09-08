@@ -650,6 +650,63 @@ try {
   check(back.queue === 1 && back.crossfade === '15' && back.quiet && back.library >= 1,
     `queue, crossfade, quiet mode and library survive too (${back.queue} queued, ${back.crossfade}s, ${back.library} saved)`);
 
+  // an offline render must keep its ambience: the live source cap has no business there
+  const offlineAmbience = await page.evaluate(async () => {
+    const s = AN.defaultSettings('lofi');
+    s.seed = 'cap'; s.levels.rain = 0.6; s.levels.vinyl = 0.5; s.levels.fire = 0.4;
+    const sr = 8000, seconds = 90;
+    const ctx = new OfflineAudioContext(1, sr * seconds, sr);
+    const engine = new AN.Engine(ctx, AN.compose(s), s, { offline: true });
+    let kept = 0;
+    const real = engine.graph.hasRoom.bind(engine.graph);
+    engine.graph.hasRoom = () => { const ok = real(); if (ok) kept++; return ok; };
+    engine.transport.renderRange(seconds);
+    return { kept, dropped: engine.graph.dropped, flag: engine.graph.offline };
+  });
+  check(offlineAmbience.flag && offlineAmbience.dropped === 0 && offlineAmbience.kept > 500,
+    `an offline render keeps every one-shot (${offlineAmbience.kept} kept, ${offlineAmbience.dropped} dropped)`);
+
+  // both pieces must keep playing for the whole crossfade, not just the lookahead
+  const longFade = await page.evaluate(async () => {
+    const engine = AmbientNoiser.ensureEngine();
+    if (!engine.transport.playing) engine.transport.play();
+    await new Promise((r) => setTimeout(r, 600));
+    const old = engine;
+    let steps = 0;
+    const realStep = old.onStep.bind(old);
+    old.onStep = (ev) => { steps++; return realStep(ev); };
+    AmbientNoiser.crossfadeTo(AN.defaultSettings('lofi'), 6);
+    const perSecond = [];
+    for (let i = 0; i < 5; i++) {
+      const before = steps;
+      await new Promise((r) => setTimeout(r, 1000));
+      perSecond.push(steps - before);
+    }
+    AmbientNoiser.state.engine.transport.pause();
+    return perSecond;
+  });
+  check(longFade.every((n) => n > 0),
+    `the outgoing piece keeps playing through a 6 s crossfade (steps per second: ${longFade.join(', ')})`);
+
+  // seeking somewhere else releases a locked movement, rather than snapping back
+  const lockRelease = await page.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    if (!t.playing) t.play();
+    await new Promise((r) => setTimeout(r, 300));
+    AmbientNoiser.setLock(true);
+    const wasLocked = t.lock != null;
+    const target = AmbientNoiser.state.plan.sections[(AN.sectionAt(AmbientNoiser.state.plan, t.now()).index + 3)
+      % AmbientNoiser.state.plan.sections.length];
+    AmbientNoiser.jumpMovement(1);
+    await new Promise((r) => setTimeout(r, 500));
+    const released = t.lock === null;
+    const button = document.getElementById('lock');
+    t.pause();
+    return { wasLocked, released, buttonActive: button.classList.contains('active'), target: target.index };
+  });
+  check(lockRelease.wasLocked && lockRelease.released && !lockRelease.buttonActive,
+    'seeking elsewhere releases the lock and updates the button');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

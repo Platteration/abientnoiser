@@ -44,6 +44,8 @@
       this.comp = c.createDynamicsCompressor();
       this.comp.threshold.value = -14; this.comp.knee.value = 18; this.comp.ratio.value = 5;
       this.comp.attack.value = 0.01; this.comp.release.value = 0.3;
+      // an offline render is not racing a clock, so none of the real-time guards apply
+      this.offline = opts.offline != null ? !!opts.offline : typeof c.startRendering === 'function';
       this.master.connect(this.comp);
       this.output = opts.output || null;
       this.comp.connect(this.output ? this.output.node : c.destination);
@@ -127,6 +129,9 @@
 
     /** Is there room for another incidental one-shot? */
     hasRoom() {
+      // Offline, a whole chunk is scheduled in one go and nothing has ended yet, so
+      // the live count means nothing here — and there is no real-time budget to protect.
+      if (this.offline) return true;
       if (this.sources.size < this.softLimit) return true;
       this.dropped++;
       return false;
