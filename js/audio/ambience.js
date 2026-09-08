@@ -295,9 +295,11 @@
       const bp = this.keep(c.createBiquadFilter()); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 0.4;
       const g = this.keep(c.createGain()); g.gain.value = 0.045;
       src.connect(bp); bp.connect(g); g.connect(this.layer.input);
-      // faint mains hum / motor rumble
+      // Faint motor rumble. Kept well down: a continuous 50 Hz sine easily carries
+      // more energy than the crackle it sits under, and none of it is audible on a
+      // laptop — it just eats headroom and muddies anything with real low end.
       const hum = this.keep(c.createOscillator()); hum.type = 'sine'; hum.frequency.value = 50;
-      const hg = this.keep(c.createGain()); hg.gain.value = 0.012;
+      const hg = this.keep(c.createGain()); hg.gain.value = 0.003;
       hum.connect(hg); hg.connect(this.layer.input); hum.start(t);
     }
     tick(p0, p1, toCtx, rng) {

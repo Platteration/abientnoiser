@@ -29,5 +29,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Musical validity
         run: npm run test:musical
+      - name: Texture spectra
+        run: npm run test:textures
       - name: End to end
         run: npm run test:browser

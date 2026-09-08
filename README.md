@@ -56,13 +56,16 @@ A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Se
 ## Tests
 
 ```bash
-npm test               # node --test: PRNG, theory, composer, styles, app shell
-npm run test:musical   # every style's whole loop, checked for wrong notes
+npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
+npm run test:musical   # every style's whole loop, checked for wrong notes and wrong timing
+npm run test:textures  # each environment texture, checked against the sound it claims to be
 npm run test:browser   # Playwright + Chromium, end to end
-npm run test:all       # all three
+npm run test:all       # all four
 ```
 
-`test:musical` schedules all eight styles end to end with the synths stubbed out — about 45,000 notes — and checks every one is in the key of the movement that asked for it, inside its layer's register, and a real MIDI number, plus that the walking bass walks rather than leaps. A one-semitone error anywhere fails it.
+`test:musical` schedules all eight styles end to end with the synths and drum voices stubbed out — around 58,000 notes and hits — and checks every one is in the key of the movement that asked for it, inside its layer's register, a real MIDI number, and landing on its own step, swung forward and never early. A one-semitone or one-step error anywhere fails it.
+
+`test:textures` renders each of the twelve environment textures on its own and measures where its energy actually sits: rain, creek, birds, crickets, chimes and vinyl must be bright; wind, waves, fire, train and café must be low; thunder is counted rather than measured, being far too rare to catch in a short window. It exists because a 50 Hz turntable rumble was quietly carrying 87% of the vinyl layer's energy.
 
 The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
 

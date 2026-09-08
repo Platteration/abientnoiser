@@ -65,7 +65,8 @@ may use frames; the sleep timer, focus timer and queue may not.
 
 ```bash
 npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
-npm run test:musical   # every style's whole loop checked for wrong notes
+npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
+npm run test:textures  # each texture checked against the sound it claims to be
 npm run test:browser   # Playwright + Chromium, end to end
 npm run test:all
 ```
@@ -79,6 +80,11 @@ that).
 
 The browser suite also feeds itself a hostile share link and library import, and
 checks every focusable control has an accessible name.
+
+`test:textures` is the only check on how things actually sound. Nobody has heard this
+app; spectral balance is the closest available proxy. It puts the piece into a bright
+morning movement so even the rare textures fire, rather than hoping one lands inside
+the window.
 
 The browser suite spawns the dev server on a random port and waits for it to answer.
 It asserts against measured behaviour (levels, source counts, render times), so widen
