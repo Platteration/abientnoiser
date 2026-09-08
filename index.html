@@ -117,13 +117,13 @@
       </div>
       <p class="hint">Record captures what you hear, in real time, and downloads a compressed audio file when you stop — leave it running for the full hour if you like.</p>
       <div class="inline wrap">
-        <select id="wavMinutes"></select>
+        <label class="mini"><span>Length</span><select id="wavMinutes"></select></label>
         <button id="wav" type="button" class="ghost">Export WAV</button>
         <button id="wavCancel" type="button" class="ghost sm" hidden>Cancel</button>
         <progress id="wavProgress" max="1" value="0" hidden></progress>
         <span class="status" id="wavStatus"></span>
       </div>
-      <p class="hint">Export WAV renders the loop offline, faster than real time, as an uncompressed file. Long exports render in five-minute chunks so even a full hour fits in memory.</p>
+      <p class="hint">Export WAV renders the loop offline as an uncompressed file. It is faster than real time, though not by much once the environment layers are on — expect roughly a third of the loop's length, so about twenty minutes for a full hour. It renders in five-minute chunks, and you can cancel.</p>
     </section>
   </main>
 

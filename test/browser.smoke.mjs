@@ -707,6 +707,32 @@ try {
   check(lockRelease.wasLocked && lockRelease.released && !lockRelease.buttonActive,
     'seeking elsewhere releases the lock and updates the button');
 
+  // every control a screen reader can land on must have a name
+  await page.evaluate(() => { document.querySelector('.movements').open = true; });
+  const unnamed = await page.evaluate(() => {
+    const nameOf = (el) => {
+      const aria = el.getAttribute('aria-label');
+      if (aria && aria.trim()) return aria.trim();
+      const by = el.getAttribute('aria-labelledby');
+      if (by) { const t = document.getElementById(by); if (t && t.textContent.trim()) return t.textContent.trim(); }
+      if (el.id) { const l = document.querySelector(`label[for="${el.id}"]`); if (l && l.textContent.trim()) return l.textContent.trim(); }
+      const wrap = el.closest('label');
+      if (wrap && wrap.textContent.trim()) return wrap.textContent.trim();
+      const title = el.getAttribute('title');
+      if (title && title.trim()) return title.trim();
+      if (el.tagName === 'BUTTON' && el.textContent.trim()) return el.textContent.trim();
+      const ph = el.getAttribute('placeholder');
+      return ph && ph.trim() ? ph.trim() : null;
+    };
+    const out = [];
+    for (const el of document.querySelectorAll('button, input, select, [role="slider"], a[href]')) {
+      if (el.hidden && el.offsetParent === null) continue;
+      if (!nameOf(el)) out.push(`${el.tagName.toLowerCase()}#${el.id || '?'}`);
+    }
+    return out;
+  });
+  check(unnamed.length === 0, `every control has an accessible name${unnamed.length ? ' — missing on ' + unnamed.join(', ') : ''}`);
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
