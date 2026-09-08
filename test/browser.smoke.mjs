@@ -733,6 +733,69 @@ try {
   });
   check(unnamed.length === 0, `every control has an accessible name${unnamed.length ? ' — missing on ' + unnamed.join(', ') : ''}`);
 
+  // untrusted input: a share link and an imported library are attacker-controlled
+  const PAYLOAD = '"><img src=x onerror="window.__pwned=1">';
+  const evil = await page.evaluate((PAYLOAD) => {
+    const s = AN.defaultSettings('ambient');
+    s.seed = PAYLOAD;
+    s.style = PAYLOAD;                       // not a known style
+    s.durationMin = 'not a number';
+    s.levels = { rain: 'lots', bogus: 9e9, drums: -5 };
+    s.edits = { 0: { mood: PAYLOAD, mode: PAYLOAD, minutes: 1e9 }, evil: { mood: 'glow' } };
+    s.volume = 12;
+    return AN.storage.encodeShare(s);
+  }, PAYLOAD);
+
+  const shared = await browser.newPage();
+  const sharedErrors = [];
+  shared.on('pageerror', (e) => sharedErrors.push(String(e)));
+  await shared.goto(`http://localhost:${port}/?mix=${encodeURIComponent(evil)}`);
+  await shared.waitForSelector('.seg');
+  const sanitised = await shared.evaluate((PAYLOAD) => {
+    const st = AmbientNoiser.state.settings;
+    // and again through the library import path
+    AN.storage.importJSON(JSON.stringify({ mixes: [{ name: PAYLOAD, settings: st }] }));
+    AmbientNoiser.state.queue = [];
+    location.hash = '';
+    return { st, imported: true };
+  }, PAYLOAD).then(async (r) => {
+    await shared.evaluate(() => { document.querySelector('.library').scrollIntoView(); });
+    await shared.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await shared.reload();
+    await shared.waitForSelector('.seg');
+    return shared.evaluate((PAYLOAD) => ({
+      settings: AmbientNoiser.state.settings,
+      pwned: typeof window.__pwned !== 'undefined',
+      injectedImg: document.querySelectorAll('img[src="x"]').length,
+      seedField: document.getElementById('seed').value,
+      libraryText: document.getElementById('mixList').textContent,
+      libraryHtml: document.getElementById('mixList').innerHTML.includes('<img'),
+      payloadShownAsText: document.getElementById('mixList').textContent.includes(PAYLOAD),
+    }), PAYLOAD);
+  });
+  await shared.close();
+
+  const st = sanitised.settings;
+  check(!sanitised.pwned && sanitised.injectedImg === 0 && !sanitised.libraryHtml,
+    'a hostile share link and library import inject no markup and run no script');
+  check(sanitised.payloadShownAsText, 'hostile text is shown as text in the library');
+  check(st.style === 'ambient' && st.durationMin === 60 && st.volume === 1
+    && st.levels.rain === 0 && st.levels.drums === 0 && st.levels.bogus === undefined,
+    `hostile settings are clamped to sane values (style ${st.style}, ${st.durationMin} min, volume ${st.volume})`);
+  const edit0 = st.edits && st.edits['0'];
+  check(edit0 && edit0.mood === undefined && edit0.mode === undefined && edit0.keyRoot === undefined
+    && edit0.minutes > 0 && edit0.minutes <= 60 && st.edits.evil === undefined,
+    `hostile edits lose their unknown moods and modes, keep only a clamped length (${edit0 && edit0.minutes} min),`
+    + ' and a non-numeric movement key is ignored');
+  check(sharedErrors.length === 0, `the hostile page raised no errors${sharedErrors.length ? ': ' + sharedErrors[0] : ''}`);
+
+  const junk = await page.evaluate(() => [
+    AN.storage.decodeShare('not-base64!!'),
+    AN.storage.decodeShare(''),
+    AN.storage.decodeShare(btoa('{"seed":')),
+  ].map((v) => v === null));
+  check(junk.every(Boolean), 'a corrupt share code decodes to nothing rather than throwing');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
