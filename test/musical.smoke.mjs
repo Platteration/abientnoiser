@@ -65,29 +65,60 @@ try {
       const ctx = new OfflineAudioContext(1, 128, 16000);
       const engine = new AN.Engine(ctx, plan, s, { offline: true });
 
-      // record what is asked for; build nothing
+      // record what is asked for, and which step asked for it; build nothing
       const notes = [];
+      let step = null;
+      const realOnStep = engine.onStep.bind(engine);
+      engine.onStep = (ev) => { step = ev; realOnStep(ev); step = null; };
+      const when = () => (step ? { stepT: step.t, stepLen: step.stepLen, sixteenth: step.sixteenth } : {});
+
       const real = {};
       for (const k of ['bell', 'ep', 'piano', 'pluck', 'bass', 'pad', 'drone']) {
         real[k] = AN.synths[k];
         AN.synths[k] = (g, layer, o) => {
           const sec = engine.section;
           const list = o.midis || [o.midi];
-          for (const midi of list) notes.push({ layer: layer.name, midi, section: sec ? sec.index : -1 });
+          for (const midi of list) notes.push({ layer: layer.name, midi, t: o.t, section: sec ? sec.index : -1, ...when() });
         };
       }
-      const realStep = AN.drums.step;
-      AN.drums.step = () => {};
+      const realDrums = {};
+      for (const k of ['kick', 'snare', 'hat', 'shaker', 'rim', 'brush', 'ride', 'clap']) {
+        realDrums[k] = AN.drums[k];
+        AN.drums[k] = (g, layer, o) => {
+          const sec = engine.section;
+          notes.push({ layer: 'drums', voice: k, t: o.t, section: sec ? sec.index : -1, ...when() });
+        };
+      }
       engine.transport.renderRange(plan.duration);
       for (const k in real) AN.synths[k] = real[k];
-      AN.drums.step = realStep;
+      for (const k in realDrums) AN.drums[k] = realDrums[k];
 
-      const bad = { range: [], offScale: [], register: [] };
+      const bad = { range: [], offScale: [], register: [], timing: [] };
+      // How far a note may sit after its own step: swing, plus a rolled chord's
+      // spread, plus the small humanising jitter. Nothing may sit before it.
+      const EARLY = 0.02, ROLL = 0.09;
       const steps = [];
       let approach = 0, walkNotes = 0, lastWalk = null;
       for (const n of notes) {
         const sec = plan.sections[n.section];
-        if (!sec || !Number.isFinite(n.midi)) { bad.range.push(`${n.layer} ${n.midi}`); continue; }
+        if (!sec) { bad.range.push(`${n.layer} in no section`); continue; }
+
+        // timing: every voice must land on its own step, swung forward only
+        if (n.stepT != null) {
+          // Swing delays a note; it never pulls one earlier. Deriving the bound from
+          // the section's own swing would let a negative swing excuse itself, so the
+          // lower bound is absolute: nothing may sound before the step that asked for it.
+          const swung = Math.max(0, n.sixteenth % 2 === 1 ? (sec.swing - 0.5) * 2 * n.stepLen : 0);
+          const offset = n.t - n.stepT;
+          if (offset < -EARLY || offset > swung + ROLL) {
+            bad.timing.push(`${n.voice || n.layer} on 16th ${n.sixteenth}: ${(offset * 1000).toFixed(0)}ms`
+              + ` from its step, allowed ${(-EARLY * 1000).toFixed(0)}..${((swung + ROLL) * 1000).toFixed(0)}ms`
+              + ` (step ${(n.stepLen * 1000).toFixed(0)}ms)`);
+          }
+        }
+        if (n.midi === undefined) continue; // a drum hit: timing only
+
+        if (!Number.isFinite(n.midi)) { bad.range.push(`${n.layer} ${n.midi}`); continue; }
         const band = REGISTER[n.layer];
         if (band && (n.midi < band[0] || n.midi > band[1])) bad.register.push(`${n.layer} ${n.midi}`);
         const degree = ((n.midi - (60 + sec.keyRoot)) % 12 + 12) % 12;
@@ -109,7 +140,7 @@ try {
         bad.offScale.push(`${n.layer} ${AN.theory.NOTE_NAMES[n.midi % 12]} not in ${sec.keyName} ${sec.mode}`);
       }
       out.push({
-        style, total: notes.length, bad, walkNotes, approach,
+        style, total: notes.length, drums: notes.filter((n) => n.layer === 'drums').length, bad, walkNotes, approach,
         stepsOk: steps.length ? steps.filter((d) => d <= 7).length / steps.length : 1,
         maxStep: steps.length ? Math.max(...steps) : 0,
       });
@@ -123,6 +154,9 @@ try {
     check(r.bad.range.length === 0, `${label}: every note is a real MIDI number${r.bad.range.length ? ' — ' + r.bad.range.slice(0, 3).join(', ') : ''}`);
     check(r.bad.register.length === 0, `${label}: every layer stays in its register${r.bad.register.length ? ' — ' + r.bad.register.slice(0, 3).join(', ') : ''}`);
     check(r.bad.offScale.length === 0, `${label}: every note is in key${r.bad.offScale.length ? ' — ' + r.bad.offScale.slice(0, 3).join(', ') : ''}`);
+    check(r.bad.timing.length === 0, `${label}: every voice lands on its own step, swung forward only`
+      + `${r.drums ? `, drums included (${r.drums} hits)` : ''}`
+      + `${r.bad.timing.length ? ' — ' + r.bad.timing.slice(0, 3).join('; ') : ''}`);
     if (r.walkNotes) {
       check(r.approach / r.walkNotes < 0.3, `${label}: walking bass uses approach notes sparingly (${(100 * r.approach / r.walkNotes).toFixed(0)}%)`);
       check(r.stepsOk > 0.95, `${label}: the bass walks rather than leaps (${(100 * r.stepsOk).toFixed(1)}% of steps within a fifth, largest ${r.maxStep})`);
