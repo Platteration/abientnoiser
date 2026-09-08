@@ -48,7 +48,7 @@
       const c = this.ctx, g = this.graph;
       if (!g.hasRoom()) return;
       t = Math.max(t, c.currentTime);
-      const src = g.noiseSource(type, t, true);
+      const src = g.noiseSource(type, t, true, 1); // mono: the panner places it
       const f = c.createBiquadFilter(); f.type = filterType; f.frequency.value = freq; f.Q.value = Q;
       const env = c.createGain();
       const p = g.panner(pan);

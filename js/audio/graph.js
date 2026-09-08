@@ -207,16 +207,18 @@
       return buf;
     }
 
-    /** Looping noise buffer: 'white' | 'pink' | 'brown' */
-    noise(type) {
-      return cachedBuffer(`noise:${type}:${this.ctx.sampleRate}`, () => this.buildNoise(type));
+    /** Looping noise buffer: 'white' | 'pink' | 'brown'.
+     *  Beds use the stereo buffer for width; one-shots use a mono one, since they
+     *  are placed by a panner anyway and mono halves the filtering work. */
+    noise(type, channels = 2) {
+      return cachedBuffer(`noise:${type}:${channels}:${this.ctx.sampleRate}`, () => this.buildNoise(type, channels));
     }
 
-    buildNoise(type) {
+    buildNoise(type, channels) {
       const c = this.ctx, sr = c.sampleRate, len = sr * 4;
-      const buf = c.createBuffer(2, len, sr);
+      const buf = c.createBuffer(channels, len, sr);
       const rng = AN.rng('noise', type);
-      for (let ch = 0; ch < 2; ch++) {
+      for (let ch = 0; ch < channels; ch++) {
         const d = buf.getChannelData(ch);
         if (type === 'white') {
           for (let i = 0; i < len; i++) d[i] = rng.next() * 2 - 1;
@@ -242,9 +244,9 @@
       return buf;
     }
 
-    noiseSource(type, t, loop = true) {
+    noiseSource(type, t, loop = true, channels = 2) {
       const src = this.ctx.createBufferSource();
-      src.buffer = this.noise(type);
+      src.buffer = this.noise(type, channels);
       src.loop = loop;
       this._offset = (this._offset + 0.731) % 3.9;
       src.start(t, this._offset);
