@@ -70,13 +70,22 @@ npm run test:browser   # Playwright + Chromium, end to end
 npm run test:all
 ```
 
-`test:musical` stubs the synths and checks ~45,000 scheduled notes are in key, in
-register and real MIDI numbers. When adding a musical invariant, mutation-test it:
-break the code deliberately and confirm the suite fails.
+`test:musical` stubs the synths and drum voices and checks every scheduled note and
+hit: in key, in register, a real MIDI number, and landing on its own step — swung
+forward only, never early. When adding a musical invariant, mutation-test it: break
+the code deliberately and confirm the suite fails. Derive a bound from something other
+than the value under test, or a bug will excuse itself (the swing bug did exactly
+that).
+
+The browser suite also feeds itself a hostile share link and library import, and
+checks every focusable control has an accessible name.
 
 The browser suite spawns the dev server on a random port and waits for it to answer.
 It asserts against measured behaviour (levels, source counts, render times), so widen
 a bound only when you have measured that the old one was wrong.
+
+Playwright is the only dependency and only for tests; the lockfile pins the version
+these suites were written against, and CI installs with `npm ci`.
 
 ## Things deliberately not done
 
