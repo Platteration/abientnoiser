@@ -57,6 +57,15 @@ through `escapeHtml`.
 **Selects hold strings.** `buildSelect` compares with `String(v) === String(current)`.
 Comparing with `Number()` silently fails for every string-valued select.
 
+**The service worker's cache name is derived, not typed.** `sw.js` answers the shell
+from the cache, so a build only reaches an existing visitor when `VERSION` changes —
+and a byte-identical `sw.js` is never even reinstalled. `VERSION` is a hash of the
+shell files' contents (`test/shell.test.js` recomputes it and fails when it drifts,
+printing the value to paste in), and the Pages deploy re-stamps it with the commit
+sha. Shell hits are also revalidated in the background, and navigations match the one
+cached document with the query string ignored, so `?mix=…` links do not each add a
+copy.
+
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
 may use frames; the sleep timer, focus timer and queue may not.

@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -43,4 +44,33 @@ test('the manifest points at files that exist', () => {
   for (const icon of manifest.icons) {
     assert.ok(fs.existsSync(path.join(root, icon.src.replace(/^\.\//, ''))), `missing icon ${icon.src}`);
   }
+});
+
+/** What the cache name should be, given what the shell files currently contain. */
+function shellHash() {
+  const h = crypto.createHash('sha256');
+  for (const f of shellList()) {
+    h.update(`${f}\0`);
+    if (f !== '') h.update(fs.readFileSync(path.join(root, f))); // './' is the same bytes as index.html
+  }
+  return h.digest('hex').slice(0, 12);
+}
+
+// A cache-first worker only ever refetches the shell when its cache name changes, and
+// a byte-identical sw.js is never even reinstalled. A hand-written VERSION went stale
+// for ten shell-changing commits, which froze every existing visitor on the first
+// build they loaded. Tie the name to the bytes so it cannot drift again.
+test('the service worker cache name tracks the shell contents', () => {
+  const m = read('sw.js').match(/const VERSION = '([^']*)'/);
+  assert.ok(m, 'sw.js should declare a VERSION');
+  const want = `ambient-noiser-${shellHash()}`;
+  assert.equal(m[1], want, `sw.js VERSION is stale — cached installs would keep the old shell. Set it to '${want}'.`);
+});
+
+test('the service worker revalidates hits and keeps one copy of the document', () => {
+  const sw = read('sw.js');
+  assert.match(sw, /ignoreSearch/, 'navigations must match the cached document with the query string ignored');
+  const fetchHandler = sw.slice(sw.indexOf("addEventListener('fetch'"));
+  assert.match(fetchHandler, /revalidate\(/, 'a cache hit must still be refreshed in the background');
+  assert.match(fetchHandler, /!navigate/, 'navigation responses (one per share link) must never be cached under their own URL');
 });

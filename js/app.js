@@ -204,7 +204,23 @@
   // ---------- offline ----------
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
+    // A page already under a worker keeps running the build it loaded, so say when a
+    // newer one has arrived. A first-ever registration is not an update.
+    const wasControlled = !!navigator.serviceWorker.controller;
+    let announced = false;
+    const announce = () => {
+      if (announced || !wasControlled) return;
+      announced = true;
+      toast('New version — reload to use it');
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', announce);
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => { if (sw.state === 'installed') announce(); });
+      });
+    }).catch(() => { /* offline support is optional */ });
   }
 
   // ---------- quiet mode ----------
