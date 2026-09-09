@@ -796,6 +796,33 @@ try {
   ].map((v) => v === null));
   check(junk.every(Boolean), 'a corrupt share code decodes to nothing rather than throwing');
 
+  // the tone slider is centred on the neutral value and round-trips through a save
+  const toneUi = await page.evaluate(async () => {
+    const el = document.getElementById('tone');
+    const engine = AmbientNoiser.ensureEngine();
+    el.value = '0';
+    el.dispatchEvent(new Event('input'));
+    const neutral = AmbientNoiser.state.settings.tone;
+    el.value = el.max;
+    el.dispatchEvent(new Event('input'));
+    const brightest = AmbientNoiser.state.settings.tone;
+    el.value = el.min;
+    el.dispatchEvent(new Event('input'));
+    const darkest = AmbientNoiser.state.settings.tone;
+    el.value = '50';
+    el.dispatchEvent(new Event('input'));
+    const saved = AN.storage.cleanSettings(AmbientNoiser.state.settings).tone;
+    const restored = AN.storage.decodeShare(AN.storage.encodeShare(AmbientNoiser.state.settings)).tone;
+    const engineSees = engine.tone;
+    el.value = '0';
+    el.dispatchEvent(new Event('input'));
+    return { neutral, brightest, darkest, saved, restored, engineSees, mid: (Number(el.min) + Number(el.max)) / 2 };
+  });
+  check(toneUi.neutral === 1 && toneUi.mid === 0 && toneUi.darkest === 0.5 && toneUi.brightest === 2,
+    `tone is centred on 1 and spans ${toneUi.darkest}–${toneUi.brightest}`);
+  check(Math.abs(toneUi.saved - toneUi.restored) < 1e-9 && Math.abs(toneUi.engineSees - toneUi.saved) < 1e-9,
+    'tone survives a share link and reaches the engine');
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

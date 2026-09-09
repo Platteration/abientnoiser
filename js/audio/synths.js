@@ -16,13 +16,13 @@
 
   /** Warm detuned pad. The two detuned copies are panned apart, which widens the
    *  chord without any phase trickery. midis: array of MIDI notes. */
-  S.pad = function (graph, layer, { midis, t, dur, brightness = 0.5, level = 0.25, pan = 0, wave = 'sawtooth', rng, width = 0.32 }) {
+  S.pad = function (graph, layer, { midis, t, dur, brightness = 0.5, level = 0.25, pan = 0, wave = 'sawtooth', rng, width = 0.32, tone = 1 }) {
     const c = graph.ctx;
     t = Math.max(t, c.currentTime);
     const attack = Math.min(dur * 0.45, 2.2 + (1 - brightness) * 2.5);
     const release = Math.min(9, 3 + dur * 0.35);
     const end = t + dur + release * 2;
-    const cutoff = 260 + brightness * 1900;
+    const cutoff = (260 + brightness * 1900) * tone;
 
     const out = c.createGain();
     out.connect(layer.input);
@@ -67,7 +67,7 @@
   };
 
   /** Long low drone: sub sine + soft saws through a slowly breathing filter. */
-  S.drone = function (graph, layer, { midi, t, dur, brightness = 0.3, level = 0.3, rng }) {
+  S.drone = function (graph, layer, { midi, t, dur, brightness = 0.3, level = 0.3, rng, tone = 1 }) {
     const c = graph.ctx;
     t = Math.max(t, c.currentTime);
     const { out, p } = output(graph, layer, 0);
@@ -75,7 +75,7 @@
     const end = t + dur + release * 2;
     const filt = c.createBiquadFilter();
     filt.type = 'lowpass'; filt.Q.value = 1.2;
-    const cutoff = 140 + brightness * 500;
+    const cutoff = (140 + brightness * 500) * tone;
     filt.frequency.value = cutoff;
     filt.connect(out);
     const lfo = c.createOscillator(); lfo.frequency.value = rng ? rng.float(0.02, 0.06) : 0.04;

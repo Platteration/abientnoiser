@@ -43,6 +43,13 @@ apply there, or the export silently loses its ambience.
 **Swing is a ratio: 0.5 is straight.** A style declaring `swing: [0, 0]` would pull
 every odd sixteenth a whole step *early*. `compose` clamps to `[0.5, 0.8]`.
 
+**Tone scales the voice filters, it is not an EQ.** `settings.tone` (0.5–2, centre 1)
+multiplies the pad and drone cutoffs and the lo-fi master filter, so it changes what
+the voices generate rather than boosting what is not there. Judge it with a spectral
+centroid, not a share-of-energy figure: for tonal material the fundamentals dominate
+the energy no matter how bright the top is, which made an early measurement of mine
+badly misleading.
+
 **Levels multiply three ways**: `layer.input` (the movement's own multiplier) ×
 `layer.user` (the mixer) × `engine.duck` (breaks, focus modes). `applyLevels` is the
 only thing that should write `user`.

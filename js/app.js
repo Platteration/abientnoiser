@@ -22,6 +22,10 @@
   const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
   const CROSSFADES = [4, 8, 15, 30];
   const SLEEP_FADE = 20; // seconds of fade before the sleep timer stops playback
+  // Tone is a multiplier on the voice filters, so the slider is logarithmic:
+  // centre is 1 (the sound as designed), the ends halve and double it.
+  const toneFromSlider = (v) => Math.pow(2, Number(v) / 100);
+  const sliderFromTone = (t) => Math.round(100 * Math.log2(Number.isFinite(t) ? t : 1));
   const PRESETS = [
     ['Rainy window', { rain: 0.55, thunder: 0.12, wind: 0.1 }],
     ['Thunderstorm', { rain: 0.8, thunder: 0.6, wind: 0.35 }],
@@ -60,6 +64,7 @@
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
     $('seed').value = state.settings.seed;
     $('volume').value = Math.round(state.settings.volume * 100);
+    $('tone').value = sliderFromTone(state.settings.tone == null ? 1 : state.settings.tone);
     applyAccent();
     renderPlan();
     renderLibrary();
@@ -363,6 +368,7 @@
   function syncControls() {
     $('seed').value = state.settings.seed;
     $('volume').value = Math.round(state.settings.volume * 100);
+    $('tone').value = sliderFromTone(state.settings.tone == null ? 1 : state.settings.tone);
     $('daypart').value = state.settings.daypart || '';
     buildSelect($('duration'), DURATIONS.includes(state.settings.durationMin) ? DURATIONS : DURATIONS.concat([state.settings.durationMin]).sort((a, b) => a - b), (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS.includes(state.settings.sectionMin) ? SECTION_MINS : SECTION_MINS.concat([state.settings.sectionMin]).sort((a, b) => a - b), (v) => `${v} min`, state.settings.sectionMin);
@@ -834,6 +840,11 @@
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });
     $('sectionMin').addEventListener('change', () => { state.settings.sectionMin = Number($('sectionMin').value); recompose(); });
+    $('tone').addEventListener('input', () => {
+      state.settings.tone = toneFromSlider($('tone').value);
+      if (state.engine) state.engine.setTone(state.settings.tone, state.engine.ctx.currentTime);
+      autosave();
+    });
     $('volume').addEventListener('input', () => {
       state.settings.volume = Number($('volume').value) / 100;
       if (state.engine) state.engine.setVolume(state.settings.volume, state.engine.ctx.currentTime);

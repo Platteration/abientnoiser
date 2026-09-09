@@ -64,6 +64,16 @@
 
     setVolume(v, t) { this.settings.volume = v; this.graph.setVolume(v, t); }
 
+    /** How open the voice filters are. 1 is the sound as designed. */
+    get tone() { return Number.isFinite(this.settings.tone) ? this.settings.tone : 1; }
+
+    /** Chords already sounding keep the filter they were built with; the master
+     *  character follows immediately, and the next chord picks the rest up. */
+    setTone(v, t) {
+      this.settings.tone = v;
+      if (this.section) this.graph.setCharacter(this.plan.lofi, this.section.brightness, t, v);
+    }
+
     /** A short three-note chime, independent of the mixer (used by the focus timer). */
     chime(rising = true) {
       const t = this.ctx.currentTime + 0.05;
@@ -94,7 +104,7 @@
       this.lastBass = null;
       const g = this.graph;
       const tc = fromSeek ? 0.02 : 2.5;
-      g.setCharacter(this.plan.lofi, section.brightness, t);
+      g.setCharacter(this.plan.lofi, section.brightness, t, this.tone);
       for (const l of AN.MUSIC_LAYERS) g.setSectionLevel(l.id, section.music[l.id] || 0, t, tc);
       g.setSectionLevel('drone', section.music.drone || 0, t, tc);
       for (const id in this.textures) this.textures[id].setSection(section, t);
@@ -105,7 +115,8 @@
           const keyMidi = 60 + section.keyRoot;
           S.drone(g, g.layers.drone, {
             midi: T.rootInRange(0, keyMidi, 36), t, dur: remaining - 4,
-            brightness: section.brightness, level: 0.12, rng: AN.rng(this.plan.seed, 'drone', section.index),
+            brightness: section.brightness, level: 0.12, tone: this.tone,
+            rng: AN.rng(this.plan.seed, 'drone', section.index),
           });
         }
       }
@@ -173,11 +184,11 @@
       const g = this.graph, layer = g.layers.pads;
       if (section.chordInstr !== 'pad') {
         this.compChord(chord.voicing, t, dur * 0.9, 0.3, section, rng);
-        S.pad(g, layer, { midis: chord.voicing, t, dur, brightness: section.brightness * 0.6, level: 0.04, wave: 'triangle', rng });
+        S.pad(g, layer, { midis: chord.voicing, t, dur, brightness: section.brightness * 0.6, level: 0.04, wave: 'triangle', rng, tone: this.tone });
       } else {
         const dark = section.brightness < 0.35;
         S.pad(g, layer, {
-          midis: chord.voicing, t, dur, brightness: section.brightness,
+          midis: chord.voicing, t, dur, brightness: section.brightness, tone: this.tone,
           level: dark ? 0.16 : 0.11, wave: dark ? 'triangle' : 'sawtooth', rng, pan: rng.float(-0.15, 0.15),
         });
       }

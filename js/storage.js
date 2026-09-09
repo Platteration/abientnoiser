@@ -48,6 +48,7 @@
       sectionMin: Math.min(15, Math.max(1, Number(s.sectionMin) || 4)),
       levels,
       volume: Math.min(1, Math.max(0, Number.isFinite(Number(s.volume)) ? Number(s.volume) : 0.8)),
+      tone: Math.min(2.5, Math.max(0.5, Number.isFinite(Number(s.tone)) ? Number(s.tone) : 1)),
       edits: cleanEdits(s.edits),
     };
   }

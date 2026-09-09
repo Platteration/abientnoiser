@@ -166,8 +166,8 @@
     }
 
     /** Lo-fi character: closed-down lowpass, gentle saturation, tape wow and flutter. */
-    setCharacter(lofi, brightness, t) {
-      const f = lofi ? Math.min(this.openCutoff, 2200 + brightness * 4500) : this.openCutoff;
+    setCharacter(lofi, brightness, t, tone = 1) {
+      const f = lofi ? Math.min(this.openCutoff, (2200 + brightness * 4500) * tone) : this.openCutoff;
       this.lofiFilter.frequency.setTargetAtTime(f, t, 1.5);
       const drive = lofi ? 0.35 : 0;
       if (this._drive !== drive) { this.shaper.curve = Graph.curve(drive); this._drive = drive; }

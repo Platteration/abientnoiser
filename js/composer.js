@@ -196,6 +196,7 @@
       sectionMin: 4,
       levels: Object.assign({}, style.music, style.ambience),
       volume: 0.8,
+      tone: 1,
     };
   };
 

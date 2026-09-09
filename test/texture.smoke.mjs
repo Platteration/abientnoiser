@@ -159,6 +159,66 @@ try {
         `${m.name} sits where it should: ${m.low}% of its energy below 400 Hz (needs ${claim.low}%)`);
     }
   }
+  // the tone control must actually open the voice filters, not just exist
+  const tone = await page.evaluate(async () => {
+    function fft(re, im) {
+      const n = re.length;
+      for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+      }
+      for (let len = 2; len <= n; len <<= 1) {
+        const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+        for (let i = 0; i < n; i += len) {
+          let cr = 1, ci = 0;
+          for (let k = 0; k < len / 2; k++) {
+            const ur = re[i + k], ui = im[i + k];
+            const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+            const vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+            re[i + k] = ur + vr; im[i + k] = ui + vi;
+            re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+            const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+          }
+        }
+      }
+    }
+    const centroid = async (style, toneValue) => {
+      const s = AN.defaultSettings(style);
+      s.seed = 'tone'; s.volume = 1; s.tone = toneValue;
+      for (const l of AN.AMBIENCE_LAYERS) s.levels[l.id] = 0; // music only: this is about the voices
+      const sr = 32000, seconds = 25;
+      const ctx = new OfflineAudioContext(1, sr * seconds, sr);
+      const engine = new AN.Engine(ctx, AN.compose(s), s, { offline: true });
+      engine.transport.renderRange(seconds);
+      const d = (await ctx.startRendering()).getChannelData(0);
+      const N = 4096, mag = new Float64Array(N / 2);
+      let w = 0;
+      for (let start = sr * 4; start + N < d.length; start += N * 2) {
+        const re = new Float64Array(N), im = new Float64Array(N);
+        for (let i = 0; i < N; i++) re[i] = d[start + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)));
+        fft(re, im);
+        for (let k = 0; k < N / 2; k++) mag[k] += Math.hypot(re[k], im[k]);
+        w++;
+      }
+      let num = 0, den = 0;
+      for (let k = 1; k < N / 2; k++) { const a = mag[k] / w; num += a * (k * sr / N); den += a; }
+      return Math.round(num / (den || 1));
+    };
+    const out = {};
+    for (const style of ['ambient', 'lofi']) {
+      out[style] = [];
+      for (const t of [0.6, 1, 2.5]) out[style].push(await centroid(style, t));
+    }
+    return out;
+  });
+  for (const style of Object.keys(tone)) {
+    const [dark, neutral, bright] = tone[style];
+    check(dark < neutral && neutral < bright && bright > dark * 1.3,
+      `tone opens up ${style}: spectral centroid ${dark} → ${neutral} → ${bright} Hz across the control`);
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {
