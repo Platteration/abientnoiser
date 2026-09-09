@@ -2,6 +2,16 @@
 
 Two independent reviewers read every first-party file in this repository; a third then re-read each security or bug claim against the code and tried to refute it. Only claims that survived that check are listed as findings; the ones that did not are recorded at the end so they are not re-raised.
 
+## Status — what has been fixed
+
+These findings are now fixed on `claude/repo-review-security-baiyud`, each with a regression test:
+
+- **REL-1**
+
+The rest of this document is the review as written, and the fixed items are left in place so the reasoning behind each change stays with it.
+
+Repository hardening applied here as well: every GitHub Action is pinned to a commit rather than a floating tag, each workflow declares a least-privilege `permissions` block, and a Dependabot config, a licence and a security policy are in place.
+
 ## Summary
 
 Ambient Noiser is a zero-dependency vanilla-JS PWA (~4.1k lines of first-party JS across 13 IIFE modules sharing an `AN` namespace) that composes and performs hour-long looping generative soundscapes with the Web Audio API, deployed to GitHub Pages. It is three days old (27 commits, 2026-09-06 to 09-08) but unusually mature for its age: seeded determinism is a designed-in invariant, CLAUDE.md documents the bugs that actually bit, and there are four test tiers (node unit, musical-validity, spectral texture checks, Playwright e2e) all wired into CI. The most consequential gaps are in the offline/PWA path: the service worker is cache-first with a hand-bumped VERSION string that the deploy workflow never touches, so installed users silently stop receiving updates, and its fetch fallback serves index.html for any failed request including scripts. CI hygiene lags the code (no pinned actions, no permissions block in ci.yml, no Dependabot, no lint config, Node 22 without engines/.nvmrc). Product-wise, "Follow the clock" resolves the daypart once at compose time and never re-follows, and the export story (600 MB WAV per hour) is the obvious next feature. Code quality is high; the main refactors are splitting the 936-line app.js, extracting the ~40 lines of Playwright bootstrap duplicated across three smoke files, and unifying the swing-offset formula that currently exists in five places.
