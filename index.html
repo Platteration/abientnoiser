@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Everything is same-origin: no inline scripts, no CDNs, no analytics. The
+       exceptions are the data: favicon, the blob: worker in js/timer.js and the
+       blob: URLs the exports download through. frame-ancestors cannot be set from
+       a meta tag, so it is not here. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <title>Ambient Noiser — generative looping soundscapes</title>
   <meta name="description" content="Hour-long looping ambient and lo-fi soundscapes with mood changes every few minutes, generated live in your browser. Save your favourites.">
   <meta name="theme-color" content="#0e1116">

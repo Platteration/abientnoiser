@@ -52,7 +52,11 @@ duck them; drums use the short room impulse, everything else the hall.
 
 **Anything from outside is untrusted.** Share links carry base64 JSON. Everything goes
 through `AN.storage.cleanSettings` before use, and anything rendered into HTML goes
-through `escapeHtml`.
+through `escapeHtml`. Whitelists are own-property lookups (`has(TABLE, id)`), never a
+bare `TABLE[id]`: every name on `Object.prototype` — `constructor`, `__proto__`,
+`toString` — is truthy on a plain table and used to pass as a valid style, mood or
+mode. A share link is not written to the autosave until the visitor changes something,
+so opening one cannot quietly replace the mix they were building.
 
 **Selects hold strings.** `buildSelect` compares with `String(v) === String(current)`.
 Comparing with `Number()` silently fails for every string-valued select.

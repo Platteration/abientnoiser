@@ -9,6 +9,9 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT) || 5173;
+// Loopback by default: this serves the whole checkout, which is nobody else's
+// business on a shared network. HOST=0.0.0.0 opts in to phone testing.
+const host = process.env.HOST || '127.0.0.1';
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -26,6 +29,16 @@ const server = http.createServer((req, res) => {
   } catch { // a malformed percent-escape is a bad request, not a reason to fall over
     res.writeHead(400);
     return res.end('Bad request');
+  }
+  // fs.stat throws synchronously on a NUL byte, which would take the process with it
+  if (url.includes('\0')) {
+    res.writeHead(400);
+    return res.end('Bad request');
+  }
+  // .git, .github and friends live inside the root, so the traversal guard misses them
+  if (url.split('/').some((part) => part.startsWith('.') && part !== '.' && part !== '..')) {
+    res.writeHead(404);
+    return res.end('Not found');
   }
   let file = path.join(root, url === '/' ? 'index.html' : url);
   if (path.relative(root, file).startsWith('..')) {
@@ -58,4 +71,4 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(port, () => console.log(`Ambient Noiser: http://localhost:${port}`));
+server.listen(port, host, () => console.log(`Ambient Noiser: http://localhost:${port}`));

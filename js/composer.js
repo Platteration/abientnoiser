@@ -6,6 +6,10 @@
   const AN = root.AN = root.AN || {};
   const T = AN.theory;
 
+  /** Whitelist lookup by own property only: every name inherited from
+   *  Object.prototype ('constructor', 'toString') is truthy on a plain table. */
+  const has = (table, key) => Object.prototype.hasOwnProperty.call(table, key);
+
   // ---------- layers (what the mixer shows) ----------
   AN.MUSIC_LAYERS = [
     { id: 'pads',   name: 'Pads & chords' },
@@ -188,10 +192,11 @@
   };
 
   AN.defaultSettings = function (styleId = 'ambient') {
-    const style = AN.STYLES[styleId] || AN.STYLES.ambient;
+    const known = has(AN.STYLES, styleId);
+    const style = known ? AN.STYLES[styleId] : AN.STYLES.ambient;
     return {
       seed: AN.randomSeed(),
-      style: style === AN.STYLES[styleId] ? styleId : 'ambient',
+      style: known ? styleId : 'ambient',
       durationMin: 60,
       sectionMin: 4,
       levels: Object.assign({}, style.music, style.ambience),
@@ -225,13 +230,13 @@
    * @returns plan { seed, style, duration, sections[], keyRoot }
    */
   AN.compose = function (settings) {
-    const styleId = AN.STYLES[settings.style] ? settings.style : 'ambient';
+    const styleId = has(AN.STYLES, settings.style) ? settings.style : 'ambient';
     const style = AN.STYLES[styleId];
     const seed = String(settings.seed || 'default');
     const duration = clamp(Number(settings.durationMin) || 60, 5, 240) * 60;
     const sectionLen = clamp(Number(settings.sectionMin) || 4, 1, 15) * 60;
     const wanted = settings.daypart === 'auto' ? AN.daypartAt(new Date()) : settings.daypart;
-    const daypart = AN.DAYPARTS[wanted] ? wanted : null;
+    const daypart = has(AN.DAYPARTS, wanted) ? wanted : null;
     const dp = daypart ? AN.DAYPARTS[daypart] : null;
     const rng = AN.rng(seed, styleId, daypart || '-', 'plan');
 
@@ -299,7 +304,7 @@
         moodId = rng.weighted([[ranked[0][0], 5], [ranked[1][0], 3], [ranked[2][0], 1]]);
       }
       const edit = editFor(i);
-      if (edit && AN.MOODS[edit.mood]) moodId = edit.mood;
+      if (edit && has(AN.MOODS, edit.mood)) moodId = edit.mood;
       const mood = AN.MOODS[moodId];
       const srng = AN.rng(seed, styleId, 'section', i);
 
@@ -308,7 +313,7 @@
       if (prev && srng.bool(0.35)) keyRoot = (keyRoot + srng.pick([5, 7, 9, 2, 3, 10])) % 12;
       let mode = pickMode(srng, mood, style, prev && prev.mode);
       if (edit && Number.isInteger(edit.keyRoot)) keyRoot = ((edit.keyRoot % 12) + 12) % 12;
-      if (edit && AN.theory.MODES[edit.mode]) mode = edit.mode;
+      if (edit && has(AN.theory.MODES, edit.mode)) mode = edit.mode;
 
       const tempo = clamp(tempoBase + mood.tempoDelta + (dp ? dp.tempo : 0) + srng.int(-1, 1), style.tempo[0] - 8, style.tempo[1] + 8);
       const intensity = clamp(mood.intensity + srng.gauss(0, 0.05), 0.05, 1);

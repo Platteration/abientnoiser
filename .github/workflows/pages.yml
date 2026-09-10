@@ -16,13 +16,18 @@ concurrency:
 
 jobs:
   test:
+    name: Full test suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - run: npm test
+      # The deploy is gated on everything CI runs, not just the unit suites: a push to
+      # main that breaks the musical, texture or end-to-end checks must not publish.
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:all
 
   deploy:
     needs: test

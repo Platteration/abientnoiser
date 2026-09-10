@@ -74,3 +74,20 @@ test('the service worker revalidates hits and keeps one copy of the document', (
   assert.match(fetchHandler, /revalidate\(/, 'a cache hit must still be refreshed in the background');
   assert.match(fetchHandler, /!navigate/, 'navigation responses (one per share link) must never be cached under their own URL');
 });
+
+// Every script is a same-origin file and nothing is inlined, so the policy costs
+// nothing and turns a future escaping slip into a console error instead of script
+// execution. Keeping script-src strict is the whole point of having it.
+test('the page ships a content security policy', () => {
+  const html = read('index.html');
+  const meta = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/);
+  assert.ok(meta, 'index.html should carry a Content-Security-Policy meta tag');
+  const policy = meta[1];
+  for (const directive of ['default-src', 'script-src', 'worker-src', 'object-src', 'base-uri']) {
+    assert.match(policy, new RegExp(`(^|; )${directive} `), `the policy should set ${directive}`);
+  }
+  const scriptSrc = policy.match(/script-src ([^;]+)/)[1];
+  assert.ok(!/unsafe-inline|unsafe-eval|\*/.test(scriptSrc), `script-src must stay strict, not '${scriptSrc}'`);
+  const external = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]).filter((src) => /^[a-z]+:/.test(src));
+  assert.deepEqual(external, [], 'a cross-origin script would be blocked by the policy');
+});

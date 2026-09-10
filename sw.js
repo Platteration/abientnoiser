@@ -4,7 +4,7 @@
    byte-identical sw.js is never reinstalled and a cache hit was never revalidated.
    `test/shell.test.js` recomputes the hash and fails when it drifts, and the Pages
    deploy re-stamps it with the commit sha. */
-const VERSION = 'ambient-noiser-eda6cd112050';
+const VERSION = 'ambient-noiser-18337f098e73';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
   './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',

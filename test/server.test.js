@@ -27,6 +27,15 @@ test('the dev server survives the requests a browser actually makes', async (t) 
   assert.equal((await get('/%zz')).status, 400, 'rejects a malformed escape');
   assert.equal((await get('/index.html')).status, 200, 'still alive after a malformed URL');
 
+  // a NUL byte reaches fs.stat, which throws synchronously and took the process with it
+  assert.equal((await get('/%00')).status, 400, 'rejects a NUL byte in the path');
+  assert.equal((await get('/js/%00app.js')).status, 400, 'rejects a NUL byte mid-path');
+  assert.equal((await get('/index.html')).status, 200, 'still alive after a NUL byte');
+
+  // the checkout is not the site: dotfiles stay unreachable even though they are in the root
+  assert.equal((await get('/.git/HEAD')).status, 404, 'does not serve the git directory');
+  assert.equal((await get('/.github/workflows/ci.yml')).status, 404, 'does not serve the workflows');
+
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
   assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);

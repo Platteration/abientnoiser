@@ -37,7 +37,9 @@
   // ---------- init ----------
   function init() {
     const fromUrl = new URLSearchParams(location.search).get('mix');
-    state.settings = (fromUrl && AN.storage.decodeShare(fromUrl)) || AN.storage.loadAutosave() || AN.defaultSettings('ambient');
+    const shared = fromUrl ? AN.storage.decodeShare(fromUrl) : null;
+    state.fromShare = !!shared;
+    state.settings = shared || AN.storage.loadAutosave() || AN.defaultSettings('ambient');
     if (fromUrl) history.replaceState(null, '', location.pathname);
     state.plan = AN.compose(state.settings);
 
@@ -67,6 +69,7 @@
     bind();
     if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
+    if (state.fromShare) toast('Playing a shared mix — save it to keep it');
     requestAnimationFrame(tickUI);
     state.logic = AN.ticker(500, tickLogic);
   }
@@ -179,7 +182,7 @@
       theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
     document.documentElement.dataset.theme = theme;
-    AN.storage.setPref('theme', choice);
+    setPref('theme', choice);
   }
 
   // ---------- visualiser ----------
@@ -193,7 +196,7 @@
 
   function applyVisuals() {
     const on = $('visuals').value === 'on';
-    AN.storage.setPref('visuals', on ? 'on' : 'off');
+    setPref('visuals', on ? 'on' : 'off');
     state.visual.setEnabled(on);
   }
 
@@ -226,7 +229,7 @@
   // ---------- quiet mode ----------
   function setQuiet(on) {
     document.body.classList.toggle('quiet', on);
-    AN.storage.setPref('quiet', on);
+    setPref('quiet', on);
     $('quiet').textContent = on ? 'Exit quiet mode' : 'Quiet mode';
   }
 
@@ -348,7 +351,25 @@
   }
 
   // ---------- settings changes ----------
-  function autosave() { AN.storage.autosave(state.settings); }
+  /** Every writer returns false when the browser refuses site data (private mode, a
+   *  full quota). Say so once: a fader move autosaves on every drag, and five copies
+   *  of the same bad news is worse than one. */
+  let storageWarned = false;
+  function storageRefused() {
+    if (storageWarned) return;
+    storageWarned = true;
+    toast('This browser is blocking local storage — nothing will be kept');
+  }
+  function setPref(key, value) { if (!AN.storage.setPref(key, value)) storageRefused(); }
+
+  function autosave() {
+    state.fromShare = false; // changing anything adopts a shared mix as your own
+    if (!AN.storage.autosave(state.settings)) storageRefused();
+  }
+
+  /** Leaving the page keeps the working mix — unless this visit is only *playing* a
+   *  shared link, which must not overwrite the mix the visitor was building. */
+  function autosaveOnExit() { if (!state.fromShare) autosave(); }
 
   function setStyle(id) {
     if (!AN.STYLES[id]) return;
@@ -416,9 +437,9 @@
 
   // ---------- queue ----------
   function saveQueue() {
-    AN.storage.setPref('queue', state.queue);
-    AN.storage.setPref('queueEvery', Number($('queueEvery').value) || 0);
-    AN.storage.setPref('crossfade', Number($('crossfade').value) || 8);
+    setPref('queue', state.queue);
+    setPref('queueEvery', Number($('queueEvery').value) || 0);
+    setPref('crossfade', Number($('crossfade').value) || 8);
   }
 
   function renderQueue() {
@@ -561,7 +582,7 @@
         <span class="swatch" style="background:hsl(${s.hue} 45% ${28 + s.intensity * 30}%)"></span>
         <span class="sname">${escapeHtml(s.name)}${s.edited ? ' <span class="pill">edited</span>' : ''}</span>
         <button type="button" class="edit" title="Change this movement">✎</button>
-        <span class="sinfo">${s.keyName} ${s.mode} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
+        <span class="sinfo">${escapeHtml(s.keyName)} ${escapeHtml(s.mode)} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
       li.querySelector('.jump').addEventListener('click', () => seekTo(s.start));
       li.querySelector('.edit').addEventListener('click', () => openEditor(s.index));
       list.appendChild(li);
@@ -737,7 +758,7 @@
       li.querySelector('.share').addEventListener('click', () => copyShare(m.settings));
       li.querySelector('.del').addEventListener('click', () => {
         if (!confirm(`Delete “${m.name}”?`)) return;
-        AN.storage.remove(m.id);
+        if (!AN.storage.remove(m.id)) storageRefused();
         state.queue = state.queue.filter((q) => q !== m.id);
         saveQueue();
         renderLibrary();
@@ -826,9 +847,8 @@
   function resumeIfInterrupted() {
     const engine = state.engine;
     if (document.hidden || !engine || !engine.transport.playing) return;
-    if (engine.ctx.state === 'suspended' && engine.ctx.resume) {
-      engine.ctx.resume().then(() => engine.transport.schedule()).catch(() => { /* needs a fresh gesture */ });
-    }
+    const resumed = AN.resumeContext(engine.ctx);
+    if (resumed) resumed.then(() => engine.transport.schedule()).catch(() => { /* needs a fresh gesture */ });
   }
 
   let toastTimer = null;
@@ -880,6 +900,7 @@
       seekTo(((e.clientX - r.left) / r.width) * state.plan.duration);
     });
     $('timeline').addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return; // Cmd/Ctrl/Alt belong to the browser
       const keys = {
         Home: () => seekTo(0),
         End: () => seekTo(state.plan.duration - 1),
@@ -919,7 +940,11 @@
     $('importFile').addEventListener('change', async () => {
       const f = $('importFile').files[0];
       if (!f) return;
-      try { const n = AN.storage.importJSON(await f.text()); renderLibrary(); toast(`Imported ${n} mix${n === 1 ? '' : 'es'}`); }
+      try {
+        const { added, skipped } = AN.storage.importJSON(await f.text());
+        renderLibrary();
+        toast(`Imported ${added} mix${added === 1 ? '' : 'es'}${skipped ? ` · ${skipped} already here` : ''}`);
+      }
       catch (e) { toast(`Import failed: ${e.message}`); }
       $('importFile').value = '';
     });
@@ -928,6 +953,7 @@
     $('wavCancel').addEventListener('click', () => { state.wavCancel = true; $('wavStatus').textContent = 'Cancelling…'; });
 
     document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return; // Cmd+P prints, it does not skip a movement
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button' && e.key !== ' ') return;
       if (e.key === ' ' && tag !== 'button') { e.preventDefault(); togglePlay(); }
@@ -938,7 +964,7 @@
       else if (e.key === 'n' || e.key === 'N') jumpMovement(1);
       else if (e.key === 'p' || e.key === 'P') jumpMovement(-1);
     });
-    window.addEventListener('beforeunload', autosave);
+    window.addEventListener('beforeunload', autosaveOnExit);
     // mobile suspends the audio context on interruptions; pick playback back up
     document.addEventListener('visibilitychange', resumeIfInterrupted);
     window.addEventListener('focus', resumeIfInterrupted);

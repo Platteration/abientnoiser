@@ -707,6 +707,190 @@ try {
   check(lockRelease.wasLocked && lockRelease.released && !lockRelease.buttonActive,
     'seeking elsewhere releases the lock and updates the button');
 
+  // un-pausing inside pause()'s 350 ms fade-out window must not leave the lookahead
+  // that was already scheduled running underneath everything play() re-enters
+  const bounce = await page.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    const graph = AmbientNoiser.state.engine.graph;
+    t.pause();
+    await new Promise((r) => setTimeout(r, 800));  // past the 350 ms deferred kill
+    t.play();
+    await new Promise((r) => setTimeout(r, 1500)); // a full lookahead is now scheduled
+    const scheduled = new Set(graph.sources);
+    t.pause();
+    await new Promise((r) => setTimeout(r, 100));  // un-pause inside the window
+    t.play();
+    await new Promise((r) => setTimeout(r, 200));
+    const survivors = [...graph.sources].filter((src) => scheduled.has(src)).length;
+    const live = graph.sources.size;
+    t.pause();
+    await new Promise((r) => setTimeout(r, 800));
+    return { before: scheduled.size, survivors, live, pending: t.pendingKill, sourcesAfterPause: graph.sources.size };
+  });
+  check(bounce.before > 0 && bounce.survivors === 0 && bounce.live > 0
+    && bounce.pending == null && bounce.sourcesAfterPause === 0,
+    `un-pausing inside the fade window stops the voices scheduled before it (${bounce.survivors} of ${bounce.before} survived, ${bounce.live} freshly scheduled)`);
+
+  // Cmd/Ctrl/Alt combinations belong to the browser: printing must not skip a movement
+  const modifiers = await page.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    if (!t.playing) t.play();
+    await new Promise((r) => setTimeout(r, 400));
+    const press = (key, opts) => document.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key, bubbles: true }, opts)));
+    const at = () => ({ pos: t.now(), section: AN.sectionAt(AmbientNoiser.state.plan, t.now()).index });
+    const before = at();
+    press('p', { ctrlKey: true });
+    press('n', { metaKey: true });
+    press('ArrowRight', { altKey: true });
+    press('q', { ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 300));
+    const guarded = at();
+    const quiet = document.body.classList.contains('quiet');
+    press('n', {});                                // the same key on its own still works
+    await new Promise((r) => setTimeout(r, 300));
+    const plain = at();
+    t.pause();
+    return { before, guarded, plain, quiet };
+  });
+  check(modifiers.guarded.section === modifiers.before.section && !modifiers.quiet
+    && Math.abs(modifiers.guarded.pos - modifiers.before.pos) < 5,
+    `modifier combinations do not seek or toggle quiet mode (moved ${(modifiers.guarded.pos - modifiers.before.pos).toFixed(1)}s)`);
+  check(modifiers.plain.section !== modifiers.before.section, 'the unmodified shortcut still skips a movement');
+
+  // Safari reports 'interrupted', not 'suspended', after a call or a screen lock
+  const resumeStates = await page.evaluate(() => {
+    const tried = (state) => {
+      let calls = 0;
+      const promise = AN.resumeContext({ state, resume() { calls++; return Promise.resolve(); } });
+      return { calls, promise: !!promise };
+    };
+    return { interrupted: tried('interrupted'), suspended: tried('suspended'), running: tried('running'), closed: tried('closed') };
+  });
+  check(resumeStates.interrupted.calls === 1 && resumeStates.interrupted.promise
+    && resumeStates.suspended.calls === 1 && resumeStates.running.calls === 0 && resumeStates.closed.calls === 0,
+    'a context is resumed from any state that is not running, including Safari’s "interrupted"');
+
+  // a backup restores the library rather than appending a second copy of everything
+  const restore = await page.evaluate(() => {
+    const backup = JSON.stringify({ app: 'ambientnoiser', version: 1, mixes: [
+      { id: 'fixture-a', name: 'Backup A', createdAt: 1, settings: AN.defaultSettings('ambient') },
+      { id: 'fixture-b', name: 'Backup B', createdAt: 2, settings: AN.defaultSettings('lofi') },
+    ] });
+    const before = AN.storage.list().length;
+    const first = AN.storage.importJSON(backup);
+    const mid = AN.storage.list().length;
+    const again = AN.storage.importJSON(backup);
+    return { before, first, mid, again, end: AN.storage.list().length };
+  });
+  check(restore.first.added === 2 && restore.mid === restore.before + 2
+    && restore.again.added === 0 && restore.again.skipped === 2 && restore.end === restore.mid,
+    `importing a backup twice restores it once (${restore.first.added} added, then ${restore.again.skipped} skipped)`);
+
+  // a browser that refuses site data must be reported, not silently ignored
+  const blocked = await page.evaluate(() => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function () { throw new Error('blocked'); };
+    try {
+      const out = {
+        autosave: AN.storage.autosave(AmbientNoiser.state.settings),
+        pref: AN.storage.setPref('probe', 1),
+        rename: AN.storage.rename('fixture-a', 'renamed'),
+        remove: AN.storage.remove('fixture-a'),
+        save: AN.storage.save('blocked', AmbientNoiser.state.settings),
+        importThrew: false,
+      };
+      try { AN.storage.importJSON(JSON.stringify({ mixes: [] })); } catch { out.importThrew = true; }
+      return out;
+    } finally { Storage.prototype.setItem = real; }
+  });
+  check(blocked.autosave === false && blocked.pref === false && blocked.rename === false
+    && blocked.remove === false && blocked.save === null && blocked.importThrew,
+    'every storage writer reports a refused write');
+
+  // a mode is rendered as text: today the whitelist is the only thing keeping markup
+  // out of that field, so a future mode with an unlucky name must still be escaped
+  const modeEscape = await page.evaluate(() => {
+    const NAME = '"><img src=y onerror="window.__modePwned=1">';
+    AN.theory.MODES[NAME] = AN.theory.MODES.dorian;
+    try {
+      AmbientNoiser.state.settings.edits = { 0: { mode: NAME } };
+      AmbientNoiser.recompose();
+      const list = document.getElementById('sectionList');
+      return {
+        kept: AmbientNoiser.state.plan.sections[0].mode === NAME, // the whitelist still allows a real mode
+        html: list.innerHTML.includes('<img'),
+        text: list.textContent.includes(NAME),
+        pwned: typeof window.__modePwned !== 'undefined',
+      };
+    } finally {
+      delete AN.theory.MODES[NAME];
+      AmbientNoiser.state.settings.edits = {};
+      AmbientNoiser.recompose();
+    }
+  });
+  check(modeEscape.kept && !modeEscape.html && !modeEscape.pwned && modeEscape.text,
+    'a mode name is escaped into the movement list rather than parsed as markup');
+
+  // inherited names ('constructor', '__proto__') are truthy on every plain table, so a
+  // whitelist that only tests for truth lets a share link through and wedges playback
+  const protoCode = await page.evaluate(() => {
+    const s = AN.defaultSettings('ambient');
+    s.seed = 'proto';
+    s.style = 'constructor';
+    s.daypart = 'constructor';
+    s.edits = { 0: { mood: 'constructor', mode: 'constructor' }, 1: { mode: '__proto__' }, 2: { mood: 'toString' } };
+    return AN.storage.encodeShare(s);
+  });
+  const protoPage = await browser.newPage();
+  const protoErrors = [];
+  protoPage.on('pageerror', (e) => protoErrors.push(String(e)));
+  protoPage.on('console', (m) => { if (m.type() === 'error') protoErrors.push(m.text()); });
+  await protoPage.goto(`http://localhost:${port}/?mix=${encodeURIComponent(protoCode)}`);
+  await protoPage.waitForSelector('.seg');
+  const proto = await protoPage.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    t.play();
+    await new Promise((r) => setTimeout(r, 900));
+    const moved = t.now() > 0;
+    const modes = AmbientNoiser.state.plan.sections.slice(0, 3).map((x) => x.mode);
+    t.pause();
+    return {
+      style: AmbientNoiser.state.settings.style,
+      daypart: AmbientNoiser.state.settings.daypart,
+      edits: Object.keys(AmbientNoiser.state.settings.edits || {}).length,
+      knownModes: modes.every((m) => Object.prototype.hasOwnProperty.call(AN.theory.MODES, m)),
+      namedChords: AmbientNoiser.state.plan.sections[0].chordNames.every((n) => typeof n === 'string' && !n.includes('undefined')),
+      moved,
+    };
+  });
+  await protoPage.close();
+  check(proto.style === 'ambient' && proto.daypart === null && proto.edits === 0 && proto.knownModes
+    && proto.namedChords && proto.moved && protoErrors.length === 0,
+    `a share link of prototype names is rejected and the piece still plays${protoErrors.length ? ': ' + protoErrors[0] : ''}`);
+
+  // opening someone else's link must not overwrite the mix the visitor was building
+  const guard = await browser.newPage();
+  await guard.goto(`http://localhost:${port}/`);
+  await guard.waitForSelector('.seg');
+  const link = await guard.evaluate(() => {
+    AmbientNoiser.applySettings(Object.assign(AN.defaultSettings('lofi'), { seed: 'my-own-work' }));
+    return AN.storage.encodeShare(Object.assign(AN.defaultSettings('space'), { seed: 'someone-elses' }));
+  });
+  await guard.goto(`http://localhost:${port}/?mix=${encodeURIComponent(link)}`);
+  await guard.waitForSelector('.seg');
+  const shareGuard = await guard.evaluate(async () => {
+    const opened = AmbientNoiser.state.settings.seed;
+    window.dispatchEvent(new Event('beforeunload'));       // leaving without touching it
+    const afterExit = AN.storage.loadAutosave().seed;
+    AmbientNoiser.state.settings.seed = 'now-it-is-mine';  // but a change adopts it
+    AmbientNoiser.recompose();
+    return { opened, afterExit, afterEdit: AN.storage.loadAutosave().seed };
+  });
+  await guard.close();
+  check(shareGuard.opened === 'someone-elses' && shareGuard.afterExit === 'my-own-work'
+    && shareGuard.afterEdit === 'now-it-is-mine',
+    `a shared link plays without replacing the visitor's autosave until they change something (kept ${shareGuard.afterExit})`);
+
   // every control a screen reader can land on must have a name
   await page.evaluate(() => { document.querySelector('.movements').open = true; });
   const unnamed = await page.evaluate(() => {
@@ -753,6 +937,9 @@ try {
   await shared.waitForSelector('.seg');
   const sanitised = await shared.evaluate((PAYLOAD) => {
     const st = AmbientNoiser.state.settings;
+    // a shared link is not autosaved until the visitor changes something, so adopt it
+    // deliberately: the point here is that the hostile blob survives the round trip safely
+    AmbientNoiser.recompose();
     // and again through the library import path
     AN.storage.importJSON(JSON.stringify({ mixes: [{ name: PAYLOAD, settings: st }] }));
     AmbientNoiser.state.queue = [];

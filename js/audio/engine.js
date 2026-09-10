@@ -11,6 +11,15 @@
   const PUMP = { lofi: 0.32, electro: 0.42, brush: 0 };  // sidechain depth per kit
   const BASS_PATTERNS = [[0, 10], [0, 6, 8], [0, 8, 14], [0, 3, 8, 11]];
 
+  /** Resume anything that is not already running. Safari reports the non-standard
+   *  state 'interrupted' after a call, Siri or a screen lock, so testing for
+   *  'suspended' alone leaves the page showing 'playing' over silence.
+   *  @returns a promise while the context can still be resumed, else null. */
+  AN.resumeContext = function (ctx) {
+    if (!ctx || !ctx.resume || ctx.state === 'running' || ctx.state === 'closed') return null;
+    try { return Promise.resolve(ctx.resume()); } catch { return null; }
+  };
+
   class Engine {
     constructor(ctx, plan, settings, opts = {}) {
       this.ctx = ctx;
@@ -315,6 +324,7 @@
       this.lock = null;         // index of a movement to repeat instead of moving on
       this.awaitingLoop = false; // scheduled to the end of the locked movement, waiting to re-enter
       this.clockFrom = null;    // a rebase that has been scheduled but not yet reached
+      this.pendingKill = null;  // pause()'s deferred teardown, flushed early by play()
       this.onLoop = null;
     }
 
@@ -347,7 +357,12 @@
     play(opts = {}) {
       if (this.playing) return;
       const ctx = this.ctx;
-      if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+      const resumed = AN.resumeContext(ctx);
+      if (resumed) resumed.catch(() => { /* needs a fresh gesture */ });
+      // Un-pausing inside the fade-out window: the deferred kill below would see a
+      // newer `gen` and skip, leaving the lookahead scheduled before the pause to
+      // sound a second time under everything re-entered here — drone included.
+      this._flushPendingKill(ctx.currentTime);
       const t = ctx.currentTime + 0.08;
       this.playing = true;
       this.gen++;
@@ -371,12 +386,23 @@
       m.cancelScheduledValues(t);
       m.setTargetAtTime(0, t, 0.06);
       const gen = ++this.gen;
-      setTimeout(() => {
+      this.pendingKill = setTimeout(() => {
+        this.pendingKill = null;
         if (this.gen !== gen) return;
         const now = ctx.currentTime;
         this.engine.graph.killAll(now);
         this.engine.stopTextures(now);
       }, 350);
+    }
+
+    /** Run a pause's deferred teardown now. The master gain is already at ~0, so
+     *  cutting the tails here is inaudible; leaving them is not. */
+    _flushPendingKill(t) {
+      if (!this.pendingKill) return;
+      clearTimeout(this.pendingKill);
+      this.pendingKill = null;
+      this.engine.graph.killAll(t);
+      this.engine.stopTextures(t);
     }
 
     /** Repeat one movement forever (null clears). */

@@ -21,7 +21,7 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 - **Edit any movement** — override its mood, key, mode and length. A movement given a length keeps it and the rest share out what is left, so the loop stays exactly as long as you asked for.
 - **Queue with crossfade** — line up saved mixes and they fade from one into the next, whole loop by whole loop or on a timer. Good for a working day.
 - **Quiet mode, visualiser, themes** — hide everything but the player, watch slow drifting bands coloured by the current movement, and pick system, dark, light or OLED black.
-- **Sleep timer** that fades out rather than cutting, media keys and lock-screen controls, and keyboard shortcuts. Timers keep running while the tab is in the background, which is the whole point.
+- **Sleep timer** that fades out rather than cutting, media keys and lock-screen controls, and keyboard shortcuts. Timers keep running while the tab is in the background, which is the whole point — on desktop and on Android. iOS is the exception: Safari suspends a Web Audio session when the screen locks, so playback and the timers stop there until you come back to the tab, and the lock screen shows no controls.
 - **Accessible and considerate** — the timeline is a keyboard slider, movement changes are announced, focus is visible, and `prefers-reduced-motion` is honoured. Under heavy load the incidental one-shots thin out so musical notes never drop.
 
 **Keeping it**
@@ -46,6 +46,9 @@ A static site with no build step and no dependencies.
 npm start            # serves http://localhost:5173
 # or: python3 -m http.server 5173
 ```
+
+`npm start` listens on loopback only, because it serves the whole checkout. To reach
+it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`.
 
 Opening `index.html` from disk also works, except for the offline service worker.
 

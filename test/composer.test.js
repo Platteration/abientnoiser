@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 require('../js/prng.js');
 require('../js/theory.js');
 require('../js/composer.js');
+require('../js/storage.js');
 const AN = globalThis.AN;
 
 test('rng is deterministic and key-sensitive', () => {
@@ -85,4 +86,41 @@ test('sectionAt wraps and finds the right section', () => {
   assert.equal(AN.sectionAt(p, s.end - 0.001).index, 2);
   assert.equal(AN.formatTime(3725), '1:02:05');
   assert.equal(AN.formatTime(65), '1:05');
+});
+
+// A share link picks the ids. 'constructor', '__proto__' and 'toString' are truthy on
+// every plain lookup table, so a whitelist that only tests for truth let them through:
+// compose then built a movement whose mode was Object.prototype.toString.
+test('inherited property names are not valid ids', () => {
+  const hostile = {
+    seed: 'proto', style: 'constructor', daypart: 'constructor', durationMin: 20, sectionMin: 2,
+    levels: {}, volume: 0.5,
+    edits: { 0: { mood: 'constructor', mode: 'constructor' }, 1: { mode: '__proto__' }, 2: { mood: 'toString' } },
+  };
+
+  const clean = AN.storage.cleanSettings(hostile);
+  assert.equal(clean.style, 'ambient');
+  assert.equal(clean.daypart, null);
+  assert.deepEqual(clean.edits, {}, 'no inherited name survives as a mood or a mode');
+
+  // and again straight from the link, since compose is reached before cleanSettings
+  const plan = AN.compose(hostile);
+  assert.equal(plan.style, 'ambient');
+  for (const s of plan.sections) {
+    assert.ok(Object.hasOwn(AN.theory.MODES, s.mode), `mode ${s.mode} is a real mode`);
+    assert.ok(Object.hasOwn(AN.MOODS, s.moodId), `mood ${s.moodId} is a real mood`);
+    assert.ok(AN.theory.scaleNotes(s.keyRoot, s.mode, 48, 72).length > 0);
+    for (const name of s.chordNames) assert.ok(!name.includes('undefined'), `chord ${name} is named`);
+  }
+
+  // a real id still works, including one that shares a name with nothing
+  const edited = AN.compose(Object.assign({}, hostile, { edits: { 0: { mode: 'dorian', mood: 'glow' } } }));
+  assert.equal(edited.sections[0].mode, 'dorian');
+  assert.equal(edited.sections[0].moodId, 'glow');
+});
+
+test('defaultSettings falls back for an inherited style name', () => {
+  const s = AN.defaultSettings('constructor');
+  assert.equal(s.style, 'ambient');
+  assert.ok(Object.keys(s.levels).length > 0, 'levels come from a real style');
 });
