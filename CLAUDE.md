@@ -69,16 +69,41 @@ printing the value to paste in), and the Pages deploy re-stamps it with the comm
 sha. Shell hits are also revalidated in the background, and navigations match the one
 cached document with the query string ignored, so `?mix=…` links do not each add a
 copy. Cache Storage is partitioned by *origin*, not by worker scope, and a GitHub Pages
-project site shares its origin with every other app the account publishes: both the
-sweep on activate and every read are scoped to the `ambient-noiser-` `PREFIX`, because
-an unscoped `caches.keys()` deletes the co-tenants' offline shells and an unscoped
-`caches.match()` can answer with one of their responses.
+project site shares its origin with every other app the account publishes. The two
+scopes differ, and both matter: the sweep on activate deletes only `PREFIX`-named
+caches, since an unfiltered `caches.keys()` sweep destroys the co-tenants' offline
+shells, while every read goes through *this build's own* `VERSION` cache rather than
+the origin-wide `caches.match()`, which can answer with a co-tenant's copy of one of
+our URLs. A read scoped to the prefix instead would search every past version's cache,
+which is exactly the staleness the derived `VERSION` exists to prevent. And a cache
+that will not open counts as a miss, not as a failure: `lookup` heads the fetch
+handler's chain, so an uncaught rejection there is a network error for every request
+the worker intercepts, the navigation included, online or offline.
 
-**Lists that grow from outside are bounded where they are written.** The library is
-capped at `MAX_MIXES` in `js/storage.js`, in both `importJSON` and `save` — a .json
-someone else wrote otherwise installs as many mixes as fit in the quota, each one
-rebuilt as its own list item on every `renderLibrary()`. 'Clear all mixes' is the way
-back out; a cap applied where the list is *read* would leave the storage full.
+**Lists that grow from outside are bounded where they are written — and a bound must
+not eat the visitor's own work.** The library is capped in `js/storage.js` at
+`MAX_MIXES` records *and* `MAX_BYTES` of serialised JSON, because the count alone does
+not bound the size: one record carrying an edit for every movement serialises to fifty
+times a plain one. `importJSON` leaves out what does not fit and reports it as `full`.
+`save` throws at the ceiling rather than dropping the oldest mix: the tail of a full
+library is the visitor's own work, a truncation cannot be undone, and a refusal can —
+they delete something they chose. The ceiling is in the library hint and in the heading
+count before it ever bites, and the messages quote what this library holds rather than
+the constant, because nothing trims a library that is already over the ceiling. A cap
+applied where the list is *read* would leave the storage full; 'Clear all mixes' is the
+way back out, and `storageRefused()` points at it once the library is what filled the
+quota.
+
+**Stored data is untrusted input.** `localStorage` and Cache Storage are keyed by
+*origin*, which a GitHub Pages project site shares with every other app the account
+publishes, so "only this app writes that key" is not true here. `cleanSettings` on the
+way *in* says nothing about what comes back out: `storage.list()` drops a record it
+cannot render and cleans the rest, and `str`/`num`/`has` refuse to coerce an object —
+`String({toString: 'x'})` throws, as does using one as a property key. `init()` calls
+`bind()` before anything draws stored content, and the draw itself goes through
+`renderStored()`, which degrades to an empty library with a visible message: with
+`renderLibrary()` running first, one unreadable record left every control on the page
+unwired, on every load, with no way back from inside the app.
 
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
@@ -101,8 +126,14 @@ the code deliberately and confirm the suite fails. Derive a bound from something
 than the value under test, or a bug will excuse itself (the swing bug did exactly
 that).
 
-The browser suite also feeds itself a hostile share link and library import, and
-checks every focusable control has an accessible name.
+The browser suite also feeds itself a hostile share link, a hostile library import and
+a hostile *stored* library (then clicks Play, because "no exception was logged" is not
+the same as "the app still works"), and checks every focusable control has an
+accessible name. It drives the service worker against a planted co-tenant cache with
+the dev server killed, which is the only way to tell a worker that reads its own cache
+from one that reads the origin's — a regex over `sw.js` cannot. `test/shell.test.js`
+loads `sw.js` with its globals stubbed and drives the real fetch handler for the cases
+a browser will not stage on demand, such as a cache that refuses to open.
 
 `test:textures` is the only check on how things actually sound. Nobody has heard this
 app; spectral balance is the closest available proxy. It puts the piece into a bright

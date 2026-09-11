@@ -26,7 +26,7 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 
 **Keeping it**
 
-- **Save mixes** to a browser library, copy a share link that recreates one exactly, export or import the library as JSON (up to 500 mixes, and one button empties it), and save a picture of a mix as a PNG card.
+- **Save mixes** to a browser library — up to 500 of them, after which Save is refused rather than dropping an older mix, so nothing you saved disappears without you deleting it. Copy a share link that recreates a mix exactly, export or import the library as JSON (one button empties it), and save a picture of a mix as a PNG card.
 - **Save as audio** — record what you hear in real time, or export the loop as a WAV rendered offline. Long exports render in five-minute chunks with a progress bar and a cancel button, so even a full hour fits in memory. Rendering is faster than real time, but not by a huge margin once the environment layers are on: roughly 7x for music alone, 3.5x for a typical mix, 2x with all twelve textures running — so a full hour takes something like fifteen to thirty minutes. The cost is the sheer number of short one-shot voices; it is the audio graph, not the composer.
 - **Works offline** — the app installs as a PWA and runs with no network at all.
 

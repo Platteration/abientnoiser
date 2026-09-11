@@ -55,7 +55,8 @@
     buildWavLengths();
     buildSelect($('queueEvery'), QUEUE_EVERY.map((q) => q[0]), (v) => QUEUE_EVERY.find((q) => Number(q[0]) === Number(v))[1], AN.storage.prefs().queueEvery || 0);
     buildSelect($('crossfade'), CROSSFADES, (v) => `${v} s`, AN.storage.prefs().crossfade || 8);
-    state.queue = (AN.storage.prefs().queue || []).filter((id) => AN.storage.get(id));
+    const savedQueue = AN.storage.prefs().queue;   // a preference is stored data too
+    state.queue = (Array.isArray(savedQueue) ? savedQueue : []).filter((id) => AN.storage.get(id));
     state.queueIndex = 0;
     buildPresets();
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
@@ -63,10 +64,11 @@
     $('seed').value = state.settings.seed;
     $('volume').value = Math.round(state.settings.volume * 100);
     applyAccent();
-    renderPlan();
-    renderLibrary();
-    renderQueue();
+    // bind() before anything draws stored content: a record this app did not write must
+    // not be able to leave the page with no control wired to it.
     bind();
+    renderPlan();
+    renderStored();
     if (AN.storage.prefs().quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
     if (state.fromShare) toast('Playing a shared mix — save it to keep it');
@@ -355,10 +357,20 @@
    *  full quota). Say so once: a fader move autosaves on every drag, and five copies
    *  of the same bad news is worse than one. */
   let storageWarned = false;
+  /** Why a write was refused. A browser blocking site data is the usual answer, but a
+   *  library big enough to have filled the quota is the one with a remedy, so measure it
+   *  and name the button that clears it rather than blaming the browser. */
+  function storageRefusedReason() {
+    const mixes = AN.storage.list();
+    const kb = Math.round(JSON.stringify(mixes).length / 1024);
+    return kb > 500
+      ? `your ${mixes.length} saved mixes are using ${kb} KB — export a backup, then Clear all mixes`
+      : 'this browser is blocking local storage';
+  }
   function storageRefused() {
     if (storageWarned) return;
     storageWarned = true;
-    toast('This browser is blocking local storage — nothing will be kept');
+    toast(`Nothing will be kept — ${storageRefusedReason()}`);
   }
   function setPref(key, value) { if (!AN.storage.setPref(key, value)) storageRefused(); }
 
@@ -736,11 +748,43 @@
   }
 
   // ---------- library ----------
+  /** Everything that draws what is in storage goes through here at startup. The records
+   *  are not necessarily this app's — a GitHub Pages project site shares its origin, and
+   *  so its localStorage, with every other app the account publishes — so storage.list()
+   *  drops what it cannot use and this catches whatever still gets through. A throw here
+   *  used to happen before bind(), which left every control on the page unwired, on
+   *  every load, with no way back from inside the app. An empty library and a message
+   *  are recoverable; an inert page is not. */
+  function renderStored() {
+    try {
+      renderLibrary();
+      renderQueue();
+    } catch {
+      state.queue = [];
+      $('mixList').innerHTML = '';
+      $('queueList').innerHTML = '';
+      $('libraryEmpty').hidden = true;
+      $('libraryBroken').hidden = false;
+      $('queueEmpty').hidden = false;
+      $('queueNow').disabled = true;
+    }
+  }
+
   function renderLibrary() {
     const list = $('mixList');
     const mixes = AN.storage.list();
     list.innerHTML = '';
+    $('libraryBroken').hidden = true;
     $('libraryEmpty').hidden = mixes.length > 0;
+    // The ceiling is visible from the first save, not only once it bites: Save refuses
+    // at the limit rather than dropping the oldest mix, and a visitor who arrives with
+    // more than the limit already stored keeps every one of them.
+    $('libraryCount').textContent = mixes.length ? `— ${mixes.length} of ${AN.storage.MAX_MIXES} saved` : '';
+    $('libraryFull').hidden = mixes.length < AN.storage.MAX_MIXES;
+    if (mixes.length >= AN.storage.MAX_MIXES) {
+      $('libraryFull').textContent = `Library is full — ${mixes.length} of ${AN.storage.MAX_MIXES} mixes. `
+        + 'Saving a new one is refused rather than dropping an old one: delete a mix, or export a backup and use Clear all mixes.';
+    }
     for (const m of mixes) {
       const st = AN.STYLES[m.settings.style] || AN.STYLES.ambient;
       const env = AN.AMBIENCE_LAYERS.filter((l) => m.settings.levels[l.id] > 0).map((l) => l.name.toLowerCase()).join(', ');
@@ -766,6 +810,16 @@
       });
       list.appendChild(li);
     }
+  }
+
+  /** What is true of *this* library rather than of the constant. Nothing shrinks a
+   *  library that is already over the ceiling, so the one visitor for whom the cap
+   *  actually matters must not be told it holds 500 while they can see 13,000. */
+  function leftOutNote(full) {
+    const n = AN.storage.list().length;
+    return n >= AN.storage.MAX_MIXES
+      ? `${full} left out — the library is full (${n} of ${AN.storage.MAX_MIXES}); Clear all mixes to start over`
+      : `${full} left out — no room for them (${n} mixes stored)`;
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -913,9 +967,13 @@
     });
     $('save').addEventListener('click', () => {
       const name = $('mixName').value.trim() || defaultMixName();
-      const saved = AN.storage.save(name, state.settings);
+      let saved;
+      // A full library refuses the new mix instead of dropping the oldest one, and says
+      // so in the same breath: deleting the visitor's own work is not a save.
+      try { saved = AN.storage.save(name, state.settings); }
+      catch (e) { return toast(e.message); }
       renderLibrary();
-      if (!saved) return toast('Could not save — this browser is blocking local storage');
+      if (!saved) return toast(`Could not save — ${storageRefusedReason()}`);
       $('mixName').value = '';
       toast(`Saved “${name}”`);
     });
@@ -956,7 +1014,7 @@
         const { added, skipped, full } = AN.storage.importJSON(await f.text());
         renderLibrary();
         toast(`Imported ${added} mix${added === 1 ? '' : 'es'}${skipped ? ` · ${skipped} already here` : ''}`
-          + (full ? ` · ${full} left out, the library holds ${AN.storage.MAX_MIXES}` : ''));
+          + (full ? ` · ${leftOutNote(full)}` : ''));
       }
       catch (e) { toast(`Import failed: ${e.message}`); }
       $('importFile').value = '';

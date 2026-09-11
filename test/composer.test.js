@@ -125,33 +125,161 @@ test('defaultSettings falls back for an inherited style name', () => {
   assert.ok(Object.keys(s.levels).length > 0, 'levels come from a real style');
 });
 
+const MIXES_KEY = 'ambientnoiser.mixes.v1';
+
+/** A localStorage stand-in: node has none, and these tests are about what the storage
+ *  module does with what it finds in one. */
+function withStorage(stored, fn) {
+  const store = new Map();
+  if (stored !== undefined) store.set(MIXES_KEY, JSON.stringify(stored));
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+  };
+  try { return fn(store); } finally { delete globalThis.localStorage; }
+}
+
+const plainMix = (i) => ({ id: `x${i}`, name: 'm', createdAt: 1, settings: { seed: 's', style: 'ambient' } });
+
 // A library file is untrusted input like a share link: whoever hands the visitor a
 // .json controls how many mixes are in it. Every one is rebuilt as its own list item
 // on every render and takes a confirm() each to remove, so the list is bounded where
 // it is written — in the import loop and in save() — not where it is drawn.
 test('the library is bounded where it is written, and can be emptied', () => {
-  const store = new Map();
-  globalThis.localStorage = {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => { store.set(k, v); },
-  };
+  withStorage(undefined, () => {
+    const mixes = [];
+    for (let i = 0; i < 1200; i++) mixes.push(plainMix(i));
+    const res = AN.storage.importJSON(JSON.stringify({ app: 'ambientnoiser', version: 1, mixes }));
+    assert.equal(AN.storage.list().length, 500, 'an imported file cannot grow the library past the ceiling');
+    assert.equal(res.added, 500);
+    assert.equal(res.full, 700, 'and what it left out is reported rather than silently dropped');
 
-  const mixes = [];
-  for (let i = 0; i < 1200; i++) mixes.push({ id: `x${i}`, name: 'm', createdAt: 1, settings: { seed: 's', style: 'ambient' } });
-  const res = AN.storage.importJSON(JSON.stringify({ app: 'ambientnoiser', version: 1, mixes }));
-  assert.equal(AN.storage.list().length, 500, 'an imported file cannot grow the library past the ceiling');
-  assert.equal(res.added, 500);
-  assert.equal(res.full, 700, 'and what it left out is reported rather than silently dropped');
+    assert.ok(AN.storage.clear(), 'a library that did get filled can be emptied in one go');
+    assert.equal(AN.storage.list().length, 0);
+  });
+});
 
-  // save() unshifts onto the same list, so it needs the same ceiling; newest first
-  // means the truncation drops the oldest mix rather than refusing the new one.
-  AN.storage.save('newest', { seed: 's', style: 'ambient' });
-  const after = AN.storage.list();
-  assert.equal(after.length, 500, 'saving cannot grow it past the ceiling either');
-  assert.equal(after[0].name, 'newest');
-  assert.ok(!after.some((m) => m.id === 'x499'), 'the oldest mix is the one that goes');
+// save() shares the ceiling with the import loop, but not the remedy: the entries at
+// the tail of a full library are the visitor's own mixes, and dropping one to make room
+// for a new one deletes their work on a routine press of Save with nothing to undo it.
+// Refusing costs them one mix they can save again; truncating costs them one they had.
+test('a full library refuses a new save rather than deleting the oldest mix', () => {
+  withStorage(undefined, () => {
+    const mixes = [];
+    for (let i = 0; i < 500; i++) mixes.push(plainMix(i));
+    AN.storage.importJSON(JSON.stringify({ mixes }));
+    assert.equal(AN.storage.list().length, 500);
 
-  assert.ok(AN.storage.clear(), 'a library that did get filled can be emptied in one go');
-  assert.equal(AN.storage.list().length, 0);
-  delete globalThis.localStorage;
+    assert.throws(() => AN.storage.save('newest', { seed: 's', style: 'ambient' }),
+      /full/i, 'the save is refused, with a message the UI can show as it is');
+    const after = AN.storage.list();
+    assert.equal(after.length, 500, 'and the library is exactly as it was');
+    assert.ok(after.some((m) => m.id === 'x499'), 'the oldest mix is still there');
+    assert.ok(!after.some((m) => m.name === 'newest'), 'and the new one did not go in');
+
+    // room again after a deliberate deletion — the way back the refusal points at
+    assert.ok(AN.storage.remove('x499'));
+    const saved = AN.storage.save('newest', { seed: 's', style: 'ambient' });
+    assert.equal(AN.storage.list().length, 500);
+    assert.equal(saved.name, 'newest');
+  });
+});
+
+// The upgrade path: a library built on a build with no ceiling is bigger than this one
+// allows, and every one of those mixes is the visitor's own. Nothing trims it — not on
+// read, and not on the next save, which is where a truncating save() would take 301 of
+// them in one silent write.
+test('a library already over the ceiling keeps every mix', () => {
+  const stored = [];
+  for (let i = 0; i < 801; i++) stored.push(plainMix(i));
+  withStorage(stored, () => {
+    assert.equal(AN.storage.list().length, 801, 'reading does not trim it');
+    assert.throws(() => AN.storage.save('todays mix', { seed: 's', style: 'ambient' }), /full/i);
+    assert.equal(AN.storage.list().length, 801, 'and neither does saving');
+    assert.ok(AN.storage.rename('x800', 'renamed') && AN.storage.list().length === 801, 'nor renaming');
+    assert.ok(AN.storage.remove('x800') && AN.storage.list().length === 800, 'only a deliberate deletion');
+  });
+});
+
+// The count alone does not bound the bytes: a record carrying a full set of movement
+// edits serialises to fifty times a plain one, so a couple of hundred of them fill the
+// ~5 MB localStorage budget and every later save — the visitor's own — fails.
+test('an imported library is bounded in bytes as well as in records', () => {
+  const edits = {};
+  for (let i = 0; i < 240; i++) edits[i] = { mood: 'glow', mode: 'dorian', keyRoot: 7, minutes: 3.5 };
+  const fat = [];
+  for (let i = 0; i < 400; i++) fat.push({ id: `f${i}`, name: 'fat', createdAt: 1, settings: { seed: 'seed', style: 'ambient', edits } });
+  withStorage(undefined, (store) => {
+    const res = AN.storage.importJSON(JSON.stringify({ mixes: fat }));
+    const bytes = store.get(MIXES_KEY).length;
+    assert.ok(res.added > 0, 'a big library still imports what fits');
+    assert.ok(res.added < 400, `the rest is refused (${res.added} of 400 added)`);
+    assert.equal(res.added + res.full, 400, 'and what was left out is counted');
+    // half a megabyte is nowhere near the quota, and is derived from the budget rather
+    // than from the record size this test happens to build
+    assert.ok(bytes <= AN.storage.MAX_BYTES, `the stored library is ${bytes} bytes, over the ${AN.storage.MAX_BYTES} budget`);
+    assert.ok(bytes < 5000000 / 2, 'so a file cannot take the whole localStorage quota');
+  });
+});
+
+// The edit keys are what make a record big, and the UI can only produce one per
+// movement. Bound them by the most movements the composer can make, not by a number
+// large enough to leave room for a hostile file.
+test('a movement edit past the last movement the app can make is dropped', () => {
+  const longest = AN.compose({ seed: 'bounds', style: 'ambient', durationMin: 240, sectionMin: 1 });
+  const last = longest.sections.length - 1;   // the composer's own bound, not storage's
+  const clean = AN.storage.cleanSettings({
+    seed: 's', style: 'ambient',
+    edits: { 0: { mood: 'glow' }, [last]: { mood: 'glow' }, [last + 1]: { mood: 'glow' }, 4000: { mood: 'glow' } },
+  });
+  assert.ok(clean.edits[0] && clean.edits[last], 'every movement the UI can show can still be edited');
+  assert.equal(clean.edits[last + 1], undefined, 'one past the last movement is not a movement');
+  assert.equal(clean.edits[4000], undefined);
+});
+
+// Validated on the way out, not only on the way in. cleanSettings runs on every write,
+// which says nothing about a record written by something that is not this app — and a
+// GitHub Pages project site shares its origin, and so its localStorage, with every
+// other app the account publishes. renderLibrary() reaches into m.settings.levels.
+test('a stored record this app did not write is dropped rather than handed to a renderer', () => {
+  const hostile = [
+    null,
+    'not a record',
+    ['not a record either'],
+    { id: 'a', name: 'no settings', createdAt: 1, settings: null },
+    { id: 'b', name: 'settings are a string', createdAt: 1, settings: 'levels' },
+    { name: 'no id', settings: { style: 'ambient' } },
+    { id: 'd', name: { toString: 'not callable' }, createdAt: 'soon', settings: { style: 'constructor', levels: 'lots' } },
+    { id: 'e', name: 'usable', createdAt: 3, settings: { seed: 's', style: 'lofi' } },
+  ];
+  withStorage(hostile, () => {
+    const list = AN.storage.list();
+    assert.deepEqual(list.map((m) => m.id), ['d', 'e'], 'only the records that can be rendered survive');
+    for (const m of list) {
+      assert.equal(typeof m.name, 'string');
+      assert.ok(Object.hasOwn(AN.STYLES, m.settings.style), `style ${m.settings.style} is a real style`);
+      assert.ok(m.settings.levels && typeof m.settings.levels === 'object', 'levels are there to read');
+      for (const l of AN.MUSIC_LAYERS.concat(AN.AMBIENCE_LAYERS)) assert.equal(typeof m.settings.levels[l.id], 'number');
+      assert.ok(Number.isFinite(m.createdAt));
+    }
+    assert.ok(AN.storage.get('e'), 'a usable record is still findable by id');
+    assert.equal(AN.storage.get('a'), null, 'and a dropped one is not');
+  });
+});
+
+// Preferences are read before a single control is wired — initTheme() hands the stored
+// theme straight to buildSelect, which stringifies what it is given.
+test('a stored preference that is not a scalar never reaches the UI', () => {
+  withStorage(undefined, () => {
+    globalThis.localStorage.setItem('ambientnoiser.prefs.v1', JSON.stringify({
+      theme: { toString: 'not callable' }, quiet: true, crossfade: 15,
+      queue: ['keep', { id: 'drop' }, 7], visuals: 'off',
+    }));
+    const p = AN.storage.prefs();
+    assert.equal(p.theme, undefined, 'an object is dropped rather than stringified');
+    assert.equal(p.quiet, true);
+    assert.equal(p.crossfade, 15);
+    assert.equal(p.visuals, 'off');
+    assert.deepEqual(p.queue, ['keep'], 'and an id list keeps only the ids');
+  });
 });

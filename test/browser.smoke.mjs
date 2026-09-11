@@ -802,6 +802,74 @@ try {
   check(emptied.stored === 0 && emptied.items === 0,
     `Clear all mixes empties a filled library (${emptied.stored} stored, ${emptied.items} shown)`);
 
+  // The ceiling is the visitor's limit too, so it must not be the visitor's loss: at the
+  // limit Save is refused rather than quietly deleting their oldest mix, the page states
+  // the limit before they ever press it, and the import toast reports what is true of
+  // *this* library rather than quoting the constant.
+  const libraryFile = (n, from = 0) => Buffer.from(JSON.stringify({
+    app: 'ambientnoiser', version: 1,
+    mixes: Array.from({ length: n }, (_, i) => ({ id: `own-${i + from}`, name: `mine ${i + from}`, createdAt: i + from, settings: { seed: 's', style: 'ambient' } })),
+  }));
+  const importFile = async (buffer) => {
+    await page.evaluate(() => { document.getElementById('toast').textContent = ''; });
+    await page.setInputFiles('#importFile', { name: 'mixes.json', mimeType: 'application/json', buffer });
+    await page.waitForFunction(() => document.getElementById('toast').textContent.startsWith('Imported'));
+  };
+
+  await importFile(libraryFile(501));
+  const atCeiling = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    count: document.getElementById('libraryCount').textContent.trim(),
+    hint: document.getElementById('libraryFull').hidden ? '' : document.getElementById('libraryFull').textContent,
+  }));
+  check(atCeiling.stored === 500 && /500 of 500/.test(atCeiling.count) && /full/i.test(atCeiling.hint),
+    `the page shows the ceiling it enforces (heading “${atCeiling.count}”, hint ${atCeiling.hint ? 'shown' : 'MISSING'})`);
+  check(/1 left out/.test(atCeiling.toast) && /500 of 500/.test(atCeiling.toast),
+    `the import toast describes this library, not the constant (${atCeiling.toast})`);
+
+  await page.fill('#mixName', 'one more');
+  await page.click('#save');
+  const refused = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    mine: AN.storage.list().filter((m) => m.id.startsWith('own-')).length,
+    saved: AN.storage.list().some((m) => m.name === 'one more'),
+  }));
+  check(refused.stored === 500 && refused.mine === 500 && !refused.saved && /full/i.test(refused.toast),
+    `a full library refuses the save and keeps every mix the visitor had (${refused.toast})`);
+  await page.fill('#mixName', '');
+
+  // the upgrade path: a library built before the ceiling existed is over it, and every
+  // one of those mixes is the visitor's own. Nothing trims it — not on read, and not on
+  // the next Save, which is where a truncating save() would take a hundred of them.
+  await page.evaluate(() => {
+    const mixes = [];
+    for (let i = 0; i < 600; i++) mixes.push({ id: `old-${i}`, name: `old ${i}`, createdAt: i, settings: { seed: 's', style: 'ambient' } });
+    localStorage.setItem('ambientnoiser.mixes.v1', JSON.stringify(mixes));
+  });
+  await page.reload();
+  await page.waitForSelector('.seg');
+  await importFile(libraryFile(1, 9000));
+  const overImport = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    count: document.getElementById('libraryCount').textContent.trim(),
+  }));
+  check(overImport.stored === 600 && /600 of 500/.test(overImport.toast),
+    `the import toast tells the truth to the visitor who is over the ceiling (${overImport.toast})`);
+  await page.click('#save');
+  const overSave = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    mine: AN.storage.list().filter((m) => m.id.startsWith('old-')).length,
+  }));
+  check(overSave.stored === 600 && overSave.mine === 600 && /full/i.test(overSave.toast),
+    `and their next Save refuses rather than destroying 100 of their mixes (${overSave.stored} stored, “${overSave.toast}”)`);
+  check(/600 of 500/.test(overImport.count), `the heading counts what is there, not the constant (“${overImport.count}”)`);
+  page.once('dialog', (d) => d.accept());
+  await page.click('#libClear');
+
   // a browser that refuses site data must be reported, not silently ignored
   const blocked = await page.evaluate(() => {
     const real = Storage.prototype.setItem;
@@ -998,6 +1066,119 @@ try {
     AN.storage.decodeShare(btoa('{"seed":')),
   ].map((v) => v === null));
   check(junk.every(Boolean), 'a corrupt share code decodes to nothing rather than throwing');
+
+  // Stored data is untrusted input too. localStorage is keyed by *origin*, and a GitHub
+  // Pages project site shares one with every other app the account publishes, so
+  // "only the device owner can write that key" is not true here. cleanSettings runs on
+  // every write, which says nothing about a record written by something else; the read
+  // has to hold up. renderLibrary() used to run before bind(), so one record it could
+  // not render left every control on the page unwired, on every load, permanently.
+  const wreckedCtx = await browser.newContext();
+  const wrecked = await wreckedCtx.newPage();
+  const wreckedErrors = [];
+  wrecked.on('pageerror', (e) => wreckedErrors.push(String(e)));
+  await wrecked.goto(`http://localhost:${port}/`);
+  await wrecked.waitForSelector('.seg');
+  await wrecked.evaluate(() => {
+    localStorage.setItem('ambientnoiser.mixes.v1', JSON.stringify([
+      { id: 'a', name: 'no settings', createdAt: 1, settings: null },
+      { id: 'b', name: 'no levels', createdAt: 1, settings: { style: 'ambient' } },
+      { id: 'c', name: { toString: 'not callable' }, createdAt: 'soon', settings: { seed: { toString: 'nope' }, style: 'constructor', levels: 'lots' } },
+      'not a record', null, 42,
+      { name: 'no id', settings: { style: 'ambient' } },
+      { id: 'd', name: 'usable', createdAt: 2, settings: { seed: 'kept', style: 'lofi' } },
+    ]));
+    // and the other two keys, which are read before anything is drawn at all
+    localStorage.setItem('ambientnoiser.prefs.v1', JSON.stringify({ queue: 'not an array', queueEvery: {}, theme: { toString: 'nope' } }));
+    localStorage.setItem('ambientnoiser.autosave.v1', JSON.stringify({ seed: { toString: 'nope' }, style: { toString: 'nope' }, levels: 'lots', edits: 'none', volume: {} }));
+  });
+  await wrecked.reload();
+  await wrecked.waitForSelector('.seg');
+  await wrecked.click('#play');
+  await wrecked.waitForTimeout(700);
+  const stillAlive = await wrecked.evaluate(() => ({
+    playing: !!(window.AmbientNoiser.state.engine && window.AmbientNoiser.state.engine.transport.playing),
+    label: document.getElementById('play').textContent.trim(),
+    items: document.querySelectorAll('#mixList li').length,
+    text: document.getElementById('mixList').textContent,
+    segments: document.querySelectorAll('.seg').length,
+  }));
+  await wreckedCtx.close();
+  check(stillAlive.playing && stillAlive.label === '❚❚' && stillAlive.segments >= 10,
+    `a stored record this app did not write leaves the page working (play ${stillAlive.playing ? 'started' : 'DEAD'}, ${stillAlive.segments} movements drawn)`);
+  check(stillAlive.items === 3 && stillAlive.text.includes('usable'),
+    `and the records that cannot be rendered are dropped, not shown (${stillAlive.items} of 8 kept)`);
+  check(wreckedErrors.length === 0, `the wrecked-storage page raised no errors${wreckedErrors.length ? ': ' + wreckedErrors[0] : ''}`);
+
+  // Cache Storage is partitioned by origin as well, so the same co-tenancy applies to
+  // the offline shell. Whether reads are scoped is a property of the running worker —
+  // a regex over sw.js passes one that opens the wrong cache — so drive the real thing:
+  // plant a co-tenant's cache holding a response for a URL inside this app's scope and a
+  // stale cache of this app's own, take the network away, and see what comes back.
+  const swPort = 5600 + Math.floor(Math.random() * 300);
+  const swServer = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], {
+    env: { ...process.env, PORT: String(swPort) }, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  let swUp = false;
+  for (let i = 0; i < 60 && !swUp; i++) {
+    try { swUp = (await fetch(`http://localhost:${swPort}/index.html`)).ok; } catch { /* not up yet */ }
+    if (!swUp) await new Promise((r) => setTimeout(r, 100));
+  }
+  const swCtx = await browser.newContext();
+  const swPage = await swCtx.newPage();
+  try {
+    if (!swUp) throw new Error(`the second static server never came up on port ${swPort}`);
+    // Block app.js on the first load so nothing registers a worker yet: the caches have
+    // to be in place before the install, or the activate under test never sees them.
+    await swCtx.route('**/js/app.js', (r) => r.abort());
+    await swPage.goto(`http://localhost:${swPort}/`);
+    await swPage.evaluate(async () => {
+      const tenant = await caches.open('another-app-v7');
+      await tenant.put('/js/vendor-widget.js', new Response('CO-TENANT WIDGET', { headers: { 'Content-Type': 'text/javascript' } }));
+      const stale = await caches.open('ambient-noiser-000000000000');   // a build of ours from before
+      await stale.put('/js/app.js', new Response('STALE APP'));
+    });
+    await swCtx.unroute('**/js/app.js');
+    await swPage.reload();
+    await swPage.waitForSelector('.seg');
+    const swept = await swPage.evaluate(async () => {
+      const reg = await navigator.serviceWorker.ready;   // no worker existed, so this is the new one
+      for (let i = 0; i < 200 && !navigator.serviceWorker.controller; i++) await new Promise((r) => setTimeout(r, 50));
+      return {
+        after: (await caches.keys()).sort(),
+        activated: !!(reg.active && reg.active.state === 'activated'),
+        controlled: !!navigator.serviceWorker.controller,
+      };
+    });
+    check(swept.activated && swept.controlled && swept.after.includes('another-app-v7') && !swept.after.includes('ambient-noiser-000000000000'),
+      `activate sweeps this app's stale cache and leaves the co-tenant's alone (${swept.after.join(', ')})`);
+
+    swServer.kill();
+    for (let i = 0; i < 50; i++) {                    // wait for the network to really be gone
+      try { await fetch(`http://localhost:${swPort}/index.html`); } catch { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const answered = await swPage.evaluate(async () => {
+      const get = (u) => fetch(u).then((r) => r.text()).catch((e) => `THREW ${e.message}`);
+      const widget = await get('/js/vendor-widget.js');
+      const doc = await get('./?mix=abc');
+      return {
+        coTenant: widget.includes('CO-TENANT WIDGET'),
+        ours: widget.includes('Ambient Noiser'),
+        docOurs: doc.includes('Ambient Noiser'),
+        excerpt: widget.slice(0, 40).replace(/\s+/g, ' '),
+      };
+    });
+    check(!answered.coTenant && answered.ours,
+      `offline, a URL a co-tenant cached is answered from this app's own cache (${answered.coTenant ? 'CO-TENANT BODY' : answered.excerpt}…)`);
+    check(answered.docOurs, 'and the document still comes from the cache with the query string ignored');
+    await swPage.goto(`http://localhost:${swPort}/?mix=zzz`);
+    await swPage.waitForSelector('.seg');
+    check((await swPage.title()).includes('Ambient Noiser'), `a share link navigates with no server at all (${await swPage.title()})`);
+  } finally {
+    swServer.kill();
+    await swCtx.close();
+  }
 
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();

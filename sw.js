@@ -6,12 +6,14 @@
    deploy re-stamps it with the commit sha. */
 /* Cache Storage is partitioned by ORIGIN, not by service-worker scope, and a GitHub
    Pages project site shares its origin with every other app the account publishes. So
-   an unscoped read or delete reaches the co-tenants' caches too. Both the activate
-   sweep and every read are therefore scoped to PREFIX-named caches, which here means
-   our own. The deploy re-stamps the line below with the commit sha, so keep the prefix
-   inside the literal rather than composing it. */
+   an unscoped read or delete reaches the co-tenants' caches too. The two scopes are
+   not the same: the activate sweep deletes only PREFIX-named caches, while every read
+   goes through this build's own VERSION cache — scoping a read to the prefix would
+   search every past version's cache, which is the staleness the derived VERSION is
+   there to prevent. The deploy re-stamps the line below with the commit sha, so keep
+   the prefix inside the literal rather than composing it. */
 const PREFIX = 'ambient-noiser-';
-const VERSION = 'ambient-noiser-4cc0b6ca5d93';
+const VERSION = 'ambient-noiser-fdf11eea3d2a';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
   './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',
@@ -34,10 +36,14 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-/** Read from this app's own cache. An unscoped match searches every cache on the
-    origin, so offline it can answer with a co-tenant app's copy of one of our URLs. */
+/** Read from this app's own cache. caches.match() is origin-wide, so offline it can
+    answer with a co-tenant app's copy of one of our URLs.
+    Opening a cache can fail where matching one cannot — it creates the cache when it
+    is absent — and this is the head of the fetch handler's chain, so a rejection here
+    would turn every intercepted request into a network error, the navigation included.
+    A lookup that cannot answer is a miss: the network still gets its turn. */
 function lookup(req, opts) {
-  return caches.open(VERSION).then((c) => c.match(req, opts));
+  return caches.open(VERSION).then((c) => c.match(req, opts)).catch(() => undefined);
 }
 
 /** Refresh one cache entry in the background; offline, the cached copy stands.
@@ -67,7 +73,7 @@ self.addEventListener('fetch', (e) => {
       return fetch(req).then((res) => {
         if (res.ok && !navigate) {
           const copy = res.clone();
-          e.waitUntil(caches.open(VERSION).then((c) => c.put(req, copy)));
+          e.waitUntil(caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => { /* no cache — the response still stands */ }));
         }
         return res;
       }).catch(() => lookup(DOC).then((doc) => doc || lookup('./index.html')));
