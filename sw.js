@@ -4,7 +4,14 @@
    byte-identical sw.js is never reinstalled and a cache hit was never revalidated.
    `test/shell.test.js` recomputes the hash and fails when it drifts, and the Pages
    deploy re-stamps it with the commit sha. */
-const VERSION = 'ambient-noiser-18337f098e73';
+/* Cache Storage is partitioned by ORIGIN, not by service-worker scope, and a GitHub
+   Pages project site shares its origin with every other app the account publishes. So
+   an unscoped read or delete reaches the co-tenants' caches too. Both the activate
+   sweep and every read are therefore scoped to PREFIX-named caches, which here means
+   our own. The deploy re-stamps the line below with the commit sha, so keep the prefix
+   inside the literal rather than composing it. */
+const PREFIX = 'ambient-noiser-';
+const VERSION = 'ambient-noiser-4cc0b6ca5d93';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
   './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',
@@ -22,10 +29,16 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k.startsWith(PREFIX)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
+
+/** Read from this app's own cache. An unscoped match searches every cache on the
+    origin, so offline it can answer with a co-tenant app's copy of one of our URLs. */
+function lookup(req, opts) {
+  return caches.open(VERSION).then((c) => c.match(req, opts));
+}
 
 /** Refresh one cache entry in the background; offline, the cached copy stands.
     'no-cache' so the check reaches the server rather than the browser's own cache. */
@@ -44,7 +57,7 @@ self.addEventListener('fetch', (e) => {
   // query when matching and never store a second copy per link.
   const navigate = req.mode === 'navigate';
   e.respondWith(
-    caches.match(req, { ignoreSearch: navigate }).then((hit) => {
+    lookup(req, { ignoreSearch: navigate }).then((hit) => {
       if (hit) {
         // Stale while revalidate: answer from the cache, then fetch a fresh copy so
         // the next load has it even if the worker itself never changes.
@@ -57,7 +70,7 @@ self.addEventListener('fetch', (e) => {
           e.waitUntil(caches.open(VERSION).then((c) => c.put(req, copy)));
         }
         return res;
-      }).catch(() => caches.match(DOC).then((doc) => doc || caches.match('./index.html')));
+      }).catch(() => lookup(DOC).then((doc) => doc || lookup('./index.html')));
     })
   );
 });

@@ -68,7 +68,17 @@ shell files' contents (`test/shell.test.js` recomputes it and fails when it drif
 printing the value to paste in), and the Pages deploy re-stamps it with the commit
 sha. Shell hits are also revalidated in the background, and navigations match the one
 cached document with the query string ignored, so `?mix=…` links do not each add a
-copy.
+copy. Cache Storage is partitioned by *origin*, not by worker scope, and a GitHub Pages
+project site shares its origin with every other app the account publishes: both the
+sweep on activate and every read are scoped to the `ambient-noiser-` `PREFIX`, because
+an unscoped `caches.keys()` deletes the co-tenants' offline shells and an unscoped
+`caches.match()` can answer with one of their responses.
+
+**Lists that grow from outside are bounded where they are written.** The library is
+capped at `MAX_MIXES` in `js/storage.js`, in both `importJSON` and `save` — a .json
+someone else wrote otherwise installs as many mixes as fit in the quota, each one
+rebuilt as its own list item on every `renderLibrary()`. 'Clear all mixes' is the way
+back out; a cap applied where the list is *read* would leave the storage full.
 
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing

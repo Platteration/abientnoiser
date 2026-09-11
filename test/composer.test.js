@@ -124,3 +124,34 @@ test('defaultSettings falls back for an inherited style name', () => {
   assert.equal(s.style, 'ambient');
   assert.ok(Object.keys(s.levels).length > 0, 'levels come from a real style');
 });
+
+// A library file is untrusted input like a share link: whoever hands the visitor a
+// .json controls how many mixes are in it. Every one is rebuilt as its own list item
+// on every render and takes a confirm() each to remove, so the list is bounded where
+// it is written — in the import loop and in save() — not where it is drawn.
+test('the library is bounded where it is written, and can be emptied', () => {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, v); },
+  };
+
+  const mixes = [];
+  for (let i = 0; i < 1200; i++) mixes.push({ id: `x${i}`, name: 'm', createdAt: 1, settings: { seed: 's', style: 'ambient' } });
+  const res = AN.storage.importJSON(JSON.stringify({ app: 'ambientnoiser', version: 1, mixes }));
+  assert.equal(AN.storage.list().length, 500, 'an imported file cannot grow the library past the ceiling');
+  assert.equal(res.added, 500);
+  assert.equal(res.full, 700, 'and what it left out is reported rather than silently dropped');
+
+  // save() unshifts onto the same list, so it needs the same ceiling; newest first
+  // means the truncation drops the oldest mix rather than refusing the new one.
+  AN.storage.save('newest', { seed: 's', style: 'ambient' });
+  const after = AN.storage.list();
+  assert.equal(after.length, 500, 'saving cannot grow it past the ceiling either');
+  assert.equal(after[0].name, 'newest');
+  assert.ok(!after.some((m) => m.id === 'x499'), 'the oldest mix is the one that goes');
+
+  assert.ok(AN.storage.clear(), 'a library that did get filled can be emptied in one go');
+  assert.equal(AN.storage.list().length, 0);
+  delete globalThis.localStorage;
+});

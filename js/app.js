@@ -937,13 +937,26 @@
       AN.download(new Blob([AN.storage.exportAll()], { type: 'application/json' }), 'ambient-noiser-mixes.json');
     });
     $('import').addEventListener('click', () => $('importFile').click());
+    $('libClear').addEventListener('click', () => {
+      const n = AN.storage.list().length;
+      if (!n) return toast('Nothing saved yet');
+      if (!confirm(`Delete all ${n} saved mix${n === 1 ? '' : 'es'}? This cannot be undone.`)) return;
+      if (!AN.storage.clear()) return storageRefused();
+      state.queue = [];
+      state.queueIndex = 0;
+      saveQueue();
+      renderLibrary();
+      renderQueue();
+      toast(`Deleted ${n} mix${n === 1 ? '' : 'es'}`);
+    });
     $('importFile').addEventListener('change', async () => {
       const f = $('importFile').files[0];
       if (!f) return;
       try {
-        const { added, skipped } = AN.storage.importJSON(await f.text());
+        const { added, skipped, full } = AN.storage.importJSON(await f.text());
         renderLibrary();
-        toast(`Imported ${added} mix${added === 1 ? '' : 'es'}${skipped ? ` · ${skipped} already here` : ''}`);
+        toast(`Imported ${added} mix${added === 1 ? '' : 'es'}${skipped ? ` · ${skipped} already here` : ''}`
+          + (full ? ` · ${full} left out, the library holds ${AN.storage.MAX_MIXES}` : ''));
       }
       catch (e) { toast(`Import failed: ${e.message}`); }
       $('importFile').value = '';

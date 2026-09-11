@@ -4,6 +4,11 @@
   const KEY = 'ambientnoiser.mixes.v1';
   const AUTO = 'ambientnoiser.autosave.v1';
   const PREFS = 'ambientnoiser.prefs.v1';
+  /** A ceiling on the library, enforced where it is written. Every entry is rebuilt as
+   *  its own list item on every render, so an imported file of tens of thousands of
+   *  mixes costs the visitor on every load, fills the localStorage quota so their own
+   *  saves start failing, and can only be undone one confirm() at a time. */
+  const MAX_MIXES = 500;
 
   function read(key, fallback) {
     try { const raw = root.localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
@@ -64,6 +69,7 @@
       const mixes = this.list();
       const mix = { id: uid(), name: String(name || 'Untitled').slice(0, 60), createdAt: Date.now(), settings: cleanSettings(settings) };
       mixes.unshift(mix);
+      if (mixes.length > MAX_MIXES) mixes.length = MAX_MIXES;   // newest first, so this drops the oldest
       return write(KEY, mixes) ? mix : null;
     },
     /** @returns false if this browser refused the write, like every other writer here. */
@@ -72,28 +78,31 @@
       return write(KEY, mixes);
     },
     remove(id) { return write(KEY, this.list().filter((m) => m.id !== id)); },
+    /** Empty the library in one go — the only way back from a library someone filled. */
+    clear() { return write(KEY, []); },
     get(id) { return this.list().find((m) => m.id === id) || null; },
     exportAll() { return JSON.stringify({ app: 'ambientnoiser', version: 1, mixes: this.list() }, null, 2); },
-    /** @returns { added, skipped } — throws if the browser refused to store the result. */
+    /** @returns { added, skipped, full } — throws if the browser refused to store the result. */
     importJSON(text) {
       const data = JSON.parse(text);
       const incoming = Array.isArray(data) ? data : Array.isArray(data.mixes) ? data.mixes : null;
       if (!incoming) throw new Error('Not a mix library file');
       const mixes = this.list();
       const seen = new Set(mixes.map((m) => m && m.id));
-      let added = 0, skipped = 0;
+      let added = 0, skipped = 0, full = 0;
       for (const m of incoming) {
         if (!m || !m.settings) continue;
         // Keep an exported id so importing a backup restores the library rather than
         // appending a second copy of every mix; only a genuinely new mix gets one.
         const id = typeof m.id === 'string' && m.id && m.id.length <= 40 ? m.id : uid();
         if (seen.has(id)) { skipped++; continue; }
+        if (mixes.length >= MAX_MIXES) { full++; continue; }   // a file cannot grow the library past the ceiling
         seen.add(id);
         mixes.push({ id, name: String(m.name || 'Imported').slice(0, 60), createdAt: Number(m.createdAt) || Date.now(), settings: cleanSettings(m.settings) });
         added++;
       }
       if (!write(KEY, mixes)) throw new Error('this browser refused to store the library (out of space, or storage is blocked)');
-      return { added, skipped };
+      return { added, skipped, full };
     },
     autosave(settings) { return write(AUTO, cleanSettings(settings)); },
     prefs() { const p = read(PREFS, {}); return (p && typeof p === 'object') ? p : {}; },
@@ -113,6 +122,7 @@
       } catch { return null; }
     },
     cleanSettings,
+    MAX_MIXES,
   };
 
   AN.storage = storage;

@@ -67,6 +67,22 @@ test('the service worker cache name tracks the shell contents', () => {
   assert.equal(m[1], want, `sw.js VERSION is stale — cached installs would keep the old shell. Set it to '${want}'.`);
 });
 
+// Cache Storage is partitioned by origin, not by service-worker scope, and a GitHub
+// Pages project site shares one origin with every other app the account publishes. An
+// unfiltered activate sweep therefore deletes the co-tenants' offline shells, and a
+// bare caches.match() can answer with one of their responses. The cache name already
+// carries a prefix that makes ownership decidable; the point is to use it.
+test('the service worker only touches caches it owns', () => {
+  const sw = read('sw.js');
+  const prefix = sw.match(/const PREFIX = '([^']*)'/);
+  assert.ok(prefix, 'sw.js should declare a PREFIX for its own cache names');
+  const version = sw.match(/const VERSION = '([^']*)'/)[1];
+  assert.ok(version.startsWith(prefix[1]), `VERSION '${version}' must carry the PREFIX, or the sweep deletes this app's own cache`);
+  const activate = sw.slice(sw.indexOf("addEventListener('activate'"), sw.indexOf("addEventListener('fetch'"));
+  assert.match(activate, /startsWith\(PREFIX\)/, 'the activate sweep must delete only caches named with this app\'s prefix');
+  assert.ok(!/caches\.match\(/.test(sw), 'reads must go through caches.open(VERSION), not the origin-wide caches.match()');
+});
+
 test('the service worker revalidates hits and keeps one copy of the document', () => {
   const sw = read('sw.js');
   assert.match(sw, /ignoreSearch/, 'navigations must match the cached document with the query string ignored');

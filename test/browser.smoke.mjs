@@ -786,6 +786,22 @@ try {
     && restore.again.added === 0 && restore.again.skipped === 2 && restore.end === restore.mid,
     `importing a backup twice restores it once (${restore.first.added} added, then ${restore.again.skipped} skipped)`);
 
+  // a library file is attacker-controlled: it cannot fill the library, and a library
+  // that did get filled can be emptied from the UI rather than through site settings
+  const capped = await page.evaluate(() => {
+    const mixes = [];
+    for (let i = 0; i < 1200; i++) mixes.push({ id: `flood-${i}`, name: 'flood', createdAt: 1, settings: AN.defaultSettings('ambient') });
+    const res = AN.storage.importJSON(JSON.stringify({ app: 'ambientnoiser', version: 1, mixes }));
+    return { full: res.full, stored: AN.storage.list().length };
+  });
+  check(capped.stored === 500 && capped.full > 0,
+    `an imported file cannot grow the library past its ceiling (${capped.stored} stored, ${capped.full} left out)`);
+  page.once('dialog', (d) => d.accept());
+  await page.click('#libClear');
+  const emptied = await page.evaluate(() => ({ stored: AN.storage.list().length, items: document.querySelectorAll('#mixList li').length }));
+  check(emptied.stored === 0 && emptied.items === 0,
+    `Clear all mixes empties a filled library (${emptied.stored} stored, ${emptied.items} shown)`);
+
   // a browser that refuses site data must be reported, not silently ignored
   const blocked = await page.evaluate(() => {
     const real = Storage.prototype.setItem;
