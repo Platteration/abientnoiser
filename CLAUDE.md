@@ -1,5 +1,7 @@
 # Ambient Noiser — working notes
 
+Read AGENTS.md first. It holds the working rules every coding agent follows in this repository; this file adds the notes specific to this project.
+
 A static, dependency-free web app that generates hour-long looping soundscapes with
 the Web Audio API. No build step, no server, no samples. `npm start` serves it;
 `index.html` loads the scripts in dependency order.
