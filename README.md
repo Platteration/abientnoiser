@@ -38,7 +38,7 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 | `Q` `Esc` | quiet mode |
 | `Home` `End` `PgUp` `PgDn` | on the focused timeline: start, end, back or forward five minutes |
 
-## Run it
+## Running it
 
 A static site with no build step and no dependencies.
 
@@ -56,14 +56,16 @@ Opening `index.html` from disk also works, except for the offline service worker
 
 A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** and every push to `main` publishes the app.
 
-## Tests
+## Development
 
 ```bash
-npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
-npm run test:musical   # every style's whole loop, checked for wrong notes and wrong timing
-npm run test:textures  # each environment texture, checked against the sound it claims to be
-npm run test:browser   # Playwright + Chromium, end to end
-npm run test:all       # all four
+npm test                  # node --test: PRNG, theory, composer, styles, app shell, dev server
+npm run test:conventions  # the repository's shape against CONVENTIONS.md
+npm run check             # the two above: the gate before a push
+npm run test:musical      # every style's whole loop, checked for wrong notes and wrong timing
+npm run test:textures     # each environment texture, checked against the sound it claims to be
+npm run test:e2e          # Playwright + Chromium, end to end
+npm run test:all          # all of the above
 ```
 
 `test:musical` schedules all eight styles end to end with the synths and drum voices stubbed out — around 58,000 notes and hits — and checks every one is in the key of the movement that asked for it, inside its layer's register, a real MIDI number, and landing on its own step, swung forward and never early. A one-semitone or one-step error anywhere fails it.

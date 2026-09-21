@@ -1,7 +1,7 @@
 /* Browser smoke test: loads the app in headless Chromium, renders audio offline
  * for every style and checks the output is audible, finite and not clipping,
  * then drives the live transport across a loop seam.
- * Run: npm run test:browser  (needs playwright + chromium available) */
+ * Run: npm run test:e2e  (needs playwright + chromium available) */
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import path from 'node:path';

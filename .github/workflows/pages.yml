@@ -1,3 +1,5 @@
+# Publishes the app to GitHub Pages. Enable Pages for the repository
+# (Settings → Pages → Source: GitHub Actions) once.
 name: Deploy to GitHub Pages
 
 on:
@@ -5,39 +7,34 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The build job runs `npm ci` and the test suites, so it gets no more than read:
+# anything in the dependency tree would otherwise hold a token that can publish the
+# public site and mint an OIDC identity for this repository.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Full test suite
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing after the checkout uses git; without this the job's token is
+          # left in .git/config for every later step to read.
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
       # The deploy is gated on everything CI runs, not just the unit suites: a push to
       # main that breaks the musical, texture or end-to-end checks must not publish.
-      - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm run test:all
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       # The worker is cache-first, so a deploy only reaches existing visitors if the
       # cache name changes. Stamp it with the commit rather than trusting a hand edit.
       - name: Stamp the service worker cache with this commit
@@ -47,5 +44,15 @@ jobs:
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: .
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
