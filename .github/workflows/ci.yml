@@ -15,31 +15,30 @@ permissions:
   contents: read
 
 jobs:
-  unit:
-    name: Unit tests
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      # Strictly from the lockfile, so CI runs the version these tests were written against.
+      - run: npm ci
+
       - run: npm test
+
       - run: npm run test:conventions
 
-  browser:
-    name: Browser tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci   # strictly from the lockfile, so CI runs the version these tests were written against
+      # A static app: nothing to build. The musical and texture suites launch Chromium
+      # themselves, so they follow the browser install.
       - run: npx playwright install --with-deps chromium
+
       - run: npm run test:musical
+
       - run: npm run test:textures
+
       - run: npm run test:e2e

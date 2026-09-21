@@ -23,8 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Nothing after the checkout uses git; without this the job's token is
-          # left in .git/config for every later step to read.
+          # The only git command after the checkout is the local `git archive` below;
+          # without this the job's token is left in .git/config for every later step
+          # to read.
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -33,17 +34,23 @@ jobs:
       - run: npm ci
       # The deploy is gated on everything CI runs, not just the unit suites: a push to
       # main that breaks the musical, texture or end-to-end checks must not publish.
+      # This runs on the tree as committed, so test/shell.test.js checks the VERSION
+      # the commit carries against the shell's contents before the stamp below.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:all
+      # Publish the tracked tree, not the working directory: after `npm ci` the
+      # working directory carries node_modules and whatever else a step left behind.
+      - run: mkdir dist && git archive HEAD | tar -x -C dist
       # The worker is cache-first, so a deploy only reaches existing visitors if the
-      # cache name changes. Stamp it with the commit rather than trusting a hand edit.
+      # cache name changes. Stamp the copy that is uploaded with the commit rather
+      # than trusting a hand edit.
       - name: Stamp the service worker cache with this commit
         run: |
-          sed -i "s/^const VERSION = .*/const VERSION = 'ambient-noiser-${GITHUB_SHA:0:8}';/" sw.js
-          grep -q "ambient-noiser-${GITHUB_SHA:0:8}" sw.js
+          sed -i "s/^const VERSION = .*/const VERSION = 'ambient-noiser-${GITHUB_SHA:0:8}';/" dist/sw.js
+          grep -q "ambient-noiser-${GITHUB_SHA:0:8}" dist/sw.js
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          path: .
+          path: dist
   deploy:
     needs: build
     runs-on: ubuntu-latest
