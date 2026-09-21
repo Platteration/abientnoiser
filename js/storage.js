@@ -1,9 +1,17 @@
 /* Saved mixes (localStorage), autosave, import/export, share codes. */
 (function (root) {
   const AN = root.AN = root.AN || {};
-  const KEY = 'ambientnoiser.mixes.v1';
-  const AUTO = 'ambientnoiser.autosave.v1';
-  const PREFS = 'ambientnoiser.prefs.v1';
+  /** Every key this app stores, named once so a test can pin the strings: a renamed
+   *  key orphans every visitor's library, working mix and preferences at once, and a
+   *  key is renamed only when a defect earns it. */
+  const KEYS = {
+    mixes: 'ambientnoiser.mixes.v1',
+    autosave: 'ambientnoiser.autosave.v1',
+    prefs: 'ambientnoiser.prefs.v1',
+  };
+  const KEY = KEYS.mixes;
+  const AUTO = KEYS.autosave;
+  const PREFS = KEYS.prefs;
   /** A ceiling on the library, enforced where it is written. Every entry is rebuilt as
    *  its own list item on every render, so an imported file of tens of thousands of
    *  mixes costs the visitor on every load, fills the localStorage quota so their own
@@ -45,6 +53,50 @@
    *  name or a number; anything else is absent. */
   const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
   const num = (v) => (typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN);
+
+  // ---------- preferences ----------
+  /** The preference enums, as tables of own keys so `has` is the lookup: exactly the
+   *  values the two header selects offer. */
+  const THEMES = { system: true, dark: true, light: true, black: true };
+  const VISUALS = { on: true, off: true };
+  /** How long each queued mix plays (minutes; 0 is its whole loop) and the crossfade
+   *  between them (seconds): the options the two queue selects offer, so a stored
+   *  number is always one the select can show. */
+  const QUEUE_MINUTES = [0, 10, 20, 30, 45, 60];
+  const CROSSFADES = [4, 8, 15, 30];
+  /** What a fresh visitor gets, and what Reset preferences goes back to. `visuals` is
+   *  null rather than 'on' because "not chosen" means "follow prefers-reduced-motion",
+   *  which only the page can ask; the row itself is the app's motion control. */
+  const PREF_DEFAULTS = { theme: 'system', visuals: null, quiet: false, queue: [], queueEvery: 0, crossfade: 8 };
+
+  const pick = (v, table, fallback) => (has(table, v) ? v : fallback);
+  const bool = (v, fallback) => (typeof v === 'boolean' ? v : fallback);
+  /** One of a list of numbers. includes() compares by SameValueZero, so the string '10'
+   *  is not 10 and NaN matches nothing — a select's value is written back as a number. */
+  const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
+  /** A list of mix ids: strings only, none longer than an id the library keeps. The
+   *  count is not capped here — an id that names no saved mix is dropped by the reader
+   *  before anything renders, so the library's own ceiling bounds what a queue can do. */
+  const idList = (v, fallback) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 40) : fallback.slice());
+
+  /** One preferences record, made safe field by field: a field that does not hold up
+   *  falls back to its default on its own, never the record as a whole, so one stray
+   *  value cannot cost the visitor the rest of their choices. Takes the defaults as an
+   *  argument so the tables can be exercised without the page. Preferences are stored
+   *  data too, and the same origin sharing applies: initTheme() hands the stored theme
+   *  straight to buildSelect, which stringifies what it is given, before bind() has
+   *  wired a single control. */
+  function cleanPrefs(raw, fallback) {
+    const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    return {
+      theme: pick(p.theme, THEMES, fallback.theme),
+      visuals: pick(p.visuals, VISUALS, fallback.visuals),
+      quiet: bool(p.quiet, fallback.quiet),
+      queue: idList(p.queue, fallback.queue),
+      queueEvery: oneOf(p.queueEvery, QUEUE_MINUTES, fallback.queueEvery),
+      crossfade: oneOf(p.crossfade, CROSSFADES, fallback.crossfade),
+    };
+  }
 
   /** Per-movement overrides: { "3": { mood, keyRoot, mode, minutes } }. */
   function cleanEdits(edits) {
@@ -165,22 +217,15 @@
       return { added, skipped, full };
     },
     autosave(settings) { return write(AUTO, cleanSettings(settings)); },
-    /** Preferences are stored data too, and the same origin sharing applies. Keep the
-     *  scalars and the id lists; anything else — an object whose toString is not
-     *  callable, say — is dropped rather than handed to buildSelect, which stringifies
-     *  what it is given, before bind() has wired a single control. */
-    prefs() {
-      const p = read(PREFS, {});
-      const out = {};
-      if (!p || typeof p !== 'object') return out;
-      for (const key of Object.keys(p)) {
-        const v = p[key];
-        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[key] = v;
-        else if (Array.isArray(v)) out[key] = v.filter((x) => typeof x === 'string');
-      }
-      return out;
-    },
-    setPref(key, value) { const p = this.prefs(); p[key] = value; return write(PREFS, p); },
+    /** Every field, every time: a missing or unreadable one is its default. */
+    prefs() { return cleanPrefs(read(PREFS, {}), PREF_DEFAULTS); },
+    /** Written through the same validator, so the stored record always has the clean
+     *  shape and a value the tables do not know is its default by the next read. */
+    setPref(key, value) { const p = this.prefs(); p[key] = value; return write(PREFS, cleanPrefs(p, PREF_DEFAULTS)); },
+    /** Back to what a fresh visitor gets — the preferences only. The queue is a list of
+     *  the visitor's own mixes, not a preference, so it stays; the library and the
+     *  autosave are other records and are not touched. */
+    resetPrefs() { return write(PREFS, cleanPrefs({ queue: this.prefs().queue }, PREF_DEFAULTS)); },
     loadAutosave() { const s = read(AUTO, null); return s ? cleanSettings(s) : null; },
     encodeShare(settings) {
       const s = cleanSettings(settings);
@@ -196,6 +241,13 @@
       } catch { return null; }
     },
     cleanSettings,
+    cleanPrefs,
+    KEYS,
+    PREF_DEFAULTS,
+    THEMES,
+    VISUALS,
+    QUEUE_MINUTES,
+    CROSSFADES,
     MAX_MIXES,
     MAX_BYTES,
   };

@@ -268,18 +268,91 @@ test('a stored record this app did not write is dropped rather than handed to a 
 });
 
 // Preferences are read before a single control is wired — initTheme() hands the stored
-// theme straight to buildSelect, which stringifies what it is given.
-test('a stored preference that is not a scalar never reaches the UI', () => {
+// theme straight to buildSelect, which stringifies what it is given. Each field falls
+// back on its own: one stray value must not cost the visitor the rest of their choices.
+test('a stored preference that does not hold up falls back to its default, field by field', () => {
   withStorage(undefined, () => {
-    globalThis.localStorage.setItem('ambientnoiser.prefs.v1', JSON.stringify({
+    globalThis.localStorage.setItem(AN.storage.KEYS.prefs, JSON.stringify({
       theme: { toString: 'not callable' }, quiet: true, crossfade: 15,
-      queue: ['keep', { id: 'drop' }, 7], visuals: 'off',
+      queue: ['keep', { id: 'drop' }, 7, 'x'.repeat(41)], visuals: 'off', queueEvery: '10', probe: 1,
     }));
     const p = AN.storage.prefs();
-    assert.equal(p.theme, undefined, 'an object is dropped rather than stringified');
+    assert.equal(p.theme, 'system', 'an object is dropped rather than stringified, and the default stands in');
     assert.equal(p.quiet, true);
     assert.equal(p.crossfade, 15);
     assert.equal(p.visuals, 'off');
-    assert.deepEqual(p.queue, ['keep'], 'and an id list keeps only the ids');
+    assert.deepEqual(p.queue, ['keep'], 'an id list keeps only the ids, and only ones the library could hold');
+    assert.equal(p.queueEvery, 0, 'a number stored as a string is not one of the options');
+    assert.equal(p.probe, undefined, 'a field this app does not know is not carried');
+    assert.deepEqual(Object.keys(p).sort(), Object.keys(AN.storage.PREF_DEFAULTS).sort(), 'and every field is present');
+  });
+});
+
+// The whitelist is an own-property lookup. 'constructor', '__proto__' and 'toString' are
+// truthy on every plain table, so `key in TABLE` or `TABLE[key] !== undefined` would let
+// each of them through as a theme. JSON.parse rather than a literal, because a literal
+// {__proto__: ...} sets the prototype while parsed JSON makes an own key — the case a
+// stored record actually presents.
+test('no name inherited from Object.prototype is a valid preference value or field', () => {
+  const D = AN.storage.PREF_DEFAULTS;
+  for (const name of Object.getOwnPropertyNames(Object.prototype)) {
+    const q = JSON.stringify(name);
+    const hostile = JSON.parse(`{"theme":${q},"visuals":${q},"quiet":${q},"queue":${q},"queueEvery":${q},"crossfade":${q}}`);
+    assert.deepEqual(AN.storage.cleanPrefs(hostile, D), D, `${name} is not a valid value for any field`);
+    const keyed = JSON.parse(`{${q}:true,"theme":"dark"}`);
+    const out = AN.storage.cleanPrefs(keyed, D);
+    assert.deepEqual(out, Object.assign({}, D, { theme: 'dark' }), `${name} as a field name is dropped and poisons nothing`);
+    assert.equal(Object.getPrototypeOf(out), Object.prototype);
+    withStorage(undefined, () => {
+      globalThis.localStorage.setItem(AN.storage.KEYS.prefs, `{"theme":${q}}`);
+      assert.equal(AN.storage.prefs().theme, 'system', `${name} never reaches the theme select`);
+    });
+  }
+});
+
+// The defaults and every value the selects offer survive the validator unchanged —
+// otherwise a real choice is quietly replaced by the default on the next load. The
+// values are spelled out rather than read from the tables: a member dropped from a
+// table would drop out of the loop too, and the test would excuse it.
+test('the defaults and every enum value round-trip through cleanPrefs', () => {
+  const S = AN.storage, D = S.PREF_DEFAULTS;
+  assert.deepEqual(S.cleanPrefs(D, D), D);
+  assert.deepEqual(S.cleanPrefs({}, D), D, 'an empty record is the defaults');
+  assert.deepEqual(S.cleanPrefs(null, D), D);
+  assert.deepEqual(S.cleanPrefs(['not', 'a', 'record'], D), D);
+  for (const theme of ['system', 'dark', 'light', 'black']) assert.equal(S.cleanPrefs({ theme }, D).theme, theme);
+  for (const visuals of ['on', 'off']) assert.equal(S.cleanPrefs({ visuals }, D).visuals, visuals);
+  for (const queueEvery of [0, 10, 20, 30, 45, 60]) assert.equal(S.cleanPrefs({ queueEvery }, D).queueEvery, queueEvery);
+  for (const crossfade of [4, 8, 15, 30]) assert.equal(S.cleanPrefs({ crossfade }, D).crossfade, crossfade);
+  for (const quiet of [true, false]) assert.equal(S.cleanPrefs({ quiet }, D).quiet, quiet);
+  assert.deepEqual(S.cleanPrefs({ queue: ['a', 'b'] }, D).queue, ['a', 'b']);
+  assert.notEqual(S.cleanPrefs({}, D).queue, D.queue, 'the default list is copied, not shared');
+  // and a wrong type is the default, not a coercion of the wrong value
+  assert.equal(S.cleanPrefs({ quiet: 'yes' }, D).quiet, false);
+  assert.equal(S.cleanPrefs({ crossfade: 9 }, D).crossfade, 8, 'a number the select does not offer is not shown as one');
+  assert.equal(S.cleanPrefs({ theme: 'DARK' }, D).theme, 'system');
+});
+
+// Reset is the preferences only. The queue lives in the same record but is a list of the
+// visitor's own mixes, not a preference; the library and the working mix are other
+// records, and neither is Reset's to touch.
+test('resetPrefs restores the defaults, keeps the queue and touches no other record', () => {
+  withStorage([plainMix(1), plainMix(2)], (store) => {
+    const S = AN.storage;
+    S.autosave({ seed: 'in-progress', style: 'lofi' });
+    assert.ok(S.setPref('theme', 'black'));
+    assert.ok(S.setPref('quiet', true));
+    assert.ok(S.setPref('crossfade', 30));
+    assert.ok(S.setPref('queue', ['x1', 'x2']));
+    assert.ok(S.setPref('probe', 'unknown field'), 'an unknown field is accepted by the writer');
+    assert.ok(!JSON.parse(store.get(S.KEYS.prefs)).probe, 'and not stored');
+    const mixesBefore = store.get(S.KEYS.mixes), autoBefore = store.get(S.KEYS.autosave);
+
+    assert.ok(S.resetPrefs());
+    const p = S.prefs();
+    assert.deepEqual(p, Object.assign({}, S.PREF_DEFAULTS, { queue: ['x1', 'x2'] }));
+    assert.equal(store.get(S.KEYS.mixes), mixesBefore, 'the library is untouched');
+    assert.equal(store.get(S.KEYS.autosave), autoBefore, 'and so is the working mix');
+    assert.equal(S.loadAutosave().seed, 'in-progress');
   });
 });
