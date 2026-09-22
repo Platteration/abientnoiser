@@ -72,9 +72,13 @@ npm start            # serves http://localhost:5173
 
 `npm start` listens on loopback only, because it serves the whole checkout. To reach
 it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`: the server
-then answers to this machine's addresses and to mDNS names such as `laptop.local`, and
-`ALLOWED_HOST=name` adds one more. Any other `Host` gets a 403, which is what keeps a
-page you visit from reaching the checkout by pointing its own name at 127.0.0.1.
+then answers to this machine's addresses, its hostname and mDNS names such as
+`laptop.local`, and reads its interfaces again on a miss, so a Wi-Fi joined after the
+start still works. Reaching it any other way — a port forward, a tunnel, a name your
+router hands out — needs that address in `ALLOWED_HOST` (a comma-separated list, ports
+ignored). Any other `Host` gets a 403, and one line on the terminal the first time that
+name is seen, which is what keeps a page you visit from reaching the checkout by
+pointing its own name at 127.0.0.1.
 
 Opening `index.html` from disk also works, except for the offline service worker.
 
@@ -120,7 +124,7 @@ Both suites run in CI on every push (`.github/workflows/ci.yml`).
 | `js/install.js` | the header's Install button behind `beforeinstallprompt` |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
 | `sw.js`, `manifest.webmanifest` | offline app shell and the install manifest |
-| `scripts/serve.js` | the dependency-free dev server |
+| `scripts/serve.js`, `scripts/hosts.js` | the dependency-free dev server, and the `Host` names it answers to |
 | `test/` | the node:test suites and the Chromium smoke tests |
 
 ## License

@@ -5,43 +5,18 @@
  * process. */
 const http = require('http');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { hostGate } = require('./hosts');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT) || 5173;
 // Loopback by default: this serves the whole checkout, which is nobody else's
 // business on a shared network. HOST=0.0.0.0 opts in to phone testing.
 const host = process.env.HOST || '127.0.0.1';
-
-/**
- * The name in a Host header, without its port. A bare IPv6 literal carries no
- * port — RFC 7230 requires brackets for that — so stripping `:\d+$` from one
- * turned `::1` into `:` and made that entry unmatchable.
- */
-function hostName(raw) {
-  const h = String(raw ?? '').trim().toLowerCase();
-  if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1) || h; // bracketed IPv6: the port is outside
-  return h.indexOf(':') === h.lastIndexOf(':') ? h.replace(/:\d+$/, '') : h;
-}
-
-// The names a request may carry in Host. Loopback names only by default, so a page the
-// developer visits cannot reach this server by pointing its own hostname at 127.0.0.1.
-// ALLOWED_HOST adds one more name for anyone who really does front this with something
-// else; it goes through the same normalisation, so `dev.example.com:8080` is the name it
-// looks like and not a value nothing can ever match.
-const HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'].concat(process.env.ALLOWED_HOST ? [hostName(process.env.ALLOWED_HOST)] : []));
-// Bound off loopback for phone testing, the phone types one of this machine's own
-// addresses, so every interface address is a name this server answers to — in both
-// spellings, since hostName() keeps the brackets of a bracketed IPv6 literal. A server on
-// loopback never adds them: there a LAN address in Host is as foreign as any other name.
-const lan = !['127.0.0.1', '::1', 'localhost'].includes(host);
-if (lan) {
-  HOSTS.add(hostName(host)).add(hostName(`[${host}]`));
-  for (const addresses of Object.values(os.networkInterfaces())) {
-    for (const { address } of addresses || []) HOSTS.add(hostName(address)).add(hostName(`[${address}]`));
-  }
-}
+// The names a request may carry in Host: loopback names, ALLOWED_HOST (a comma-separated
+// list), and — bound off loopback — this machine's own names, so a phone can reach it by
+// address, by hostname or by an mDNS name. The rule and its reasons are in hosts.js.
+const hostAllowed = hostGate({ host, allowedHost: process.env.ALLOWED_HOST });
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -57,13 +32,10 @@ const server = http.createServer((req, res) => {
   // told the attacker's own name resolves to 127.0.0.1 (DNS rebinding). The rebound
   // request still carries that name in Host, so this is the check that keeps a visited
   // web page out of the checkout, and it is the first answer, before the path is even
-  // looked at. A request that claims no name at all cannot be a rebound one: a browser
-  // always sends Host and a page cannot set it, so the only clients this refuses are
-  // `curl --http1.0` and raw-socket probes on loopback. Off loopback, a name under
-  // .local is answered too: that is mDNS (RFC 6762), which is what a phone types for
-  // this machine and which no internet DNS can point at 127.0.0.1.
-  const name = hostName(req.headers.host);
-  if (name && !HOSTS.has(name) && !(lan && name.endsWith('.local'))) {
+  // looked at. A request that claims no name at all is answered: a browser always
+  // sends Host and a page cannot set it, so the only clients that arrive without one
+  // are `curl --http1.0` and raw-socket probes on loopback.
+  if (!hostAllowed(req.headers.host)) {
     res.writeHead(403);
     return res.end('Forbidden');
   }

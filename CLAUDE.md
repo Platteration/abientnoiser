@@ -21,6 +21,7 @@ the Web Audio API. No build step, no server, no samples. `npm start` serves it;
 | `js/storage.js` | library, autosave, preferences, share codes |
 | `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
+| `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`) |
 
 ## Invariants worth knowing
 

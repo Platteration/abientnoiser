@@ -43,14 +43,17 @@ function http10(onPort, pathname) {
   });
 }
 
+/** Spawn the real server; `stderr()` hands back what it has logged so far. */
 async function started(onPort, env, t) {
-  const server = spawn(process.execPath, [serve], { env: { ...process.env, ...env, PORT: String(onPort) }, stdio: 'ignore' });
+  const server = spawn(process.execPath, [serve], { env: { ...process.env, ...env, PORT: String(onPort) }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  server.stderr.on('data', (d) => { err += d; });
   t.after(() => server.kill());
   for (let i = 0; i < 50; i++) {
     if ((await raw(onPort, '/index.html', `localhost:${onPort}`)).status === 200) break;
     await new Promise((r) => setTimeout(r, 100));
   }
-  return server;
+  return { server, stderr: async () => { await new Promise((r) => setTimeout(r, 50)); return err; } };
 }
 
 /** One address a phone on the LAN would type: the first non-internal IPv4, if any. */
@@ -109,8 +112,11 @@ test('the dev server survives the requests a browser actually makes', async (t) 
 // Host and a page cannot set it, so a request with none is not a rebound one.
 test('the dev server answers to its own names and refuses a rebound one', async (t) => {
   const p = port + 1;
-  await started(p, {}, t);
+  const { stderr } = await started(p, { ALLOWED_HOST: 'front.example:8080, other.example' }, t);
   assert.equal((await raw(p, '/index.html', `localhost:${p}`)).status, 200, 'its own name');
+  assert.equal((await raw(p, '/index.html', `front.example:${p}`)).status, 200, 'a name from ALLOWED_HOST, whatever port it was written with');
+  assert.equal((await raw(p, '/index.html', 'other.example')).status, 200, 'and the second name of the list');
+  assert.equal((await raw(p, '/index.html', 'front.example.evil')).status, 403, 'but not a name that merely starts with one');
   assert.equal((await raw(p, '/index.html', `127.0.0.1:${p}`)).status, 200, 'its own address');
   assert.equal((await raw(p, '/index.html', `[::1]:${p}`)).status, 200, 'its own IPv6 address, with the port outside the brackets');
   assert.equal((await raw(p, '/index.html', '::1')).status, 200, 'a bare IPv6 literal carries no port, so its last group is not one');
@@ -124,6 +130,11 @@ test('the dev server answers to its own names and refuses a rebound one', async 
   const lan = lanAddress();
   if (lan) assert.equal((await raw(p, '/index.html', `${lan}:${p}`)).status, 403, 'on loopback, this machine\'s LAN address is as foreign as any other name');
   assert.equal((await raw(p, '/index.html', `localhost:${p}`)).status, 200, 'still alive after the refusals');
+  // a refusal is explained on the terminal, once per name
+  await raw(p, '/index.html', 'evil.example:5173');
+  const log = await stderr();
+  assert.equal((log.match(/refused Host "evil.example"/g) || []).length, 1, `evil.example is logged once: ${log}`);
+  assert.match(log, /ALLOWED_HOST=evil.example/, 'with the way to allow it');
 });
 
 // HOST=0.0.0.0 is the phone-testing mode: the phone types this machine's address, so the
@@ -136,6 +147,9 @@ test('bound to a LAN address, the dev server answers to this machine\'s own addr
   else assert.equal((await raw(p, '/index.html', `${lan}:${p}`)).status, 200, `answers to ${lan}`);
   assert.equal((await raw(p, '/index.html', `localhost:${p}`)).status, 200, 'and still to localhost');
   assert.equal((await raw(p, '/index.html', `laptop.local:${p}`)).status, 200, 'and to an mDNS name, which a phone types and no internet DNS can rebind');
+  const name = os.hostname();
+  assert.equal((await raw(p, '/index.html', `${name}:${p}`)).status, 200, `and to this machine's hostname (${name})`);
+  assert.equal((await raw(p, '/index.html', `${name.toUpperCase()}.local:${p}`)).status, 200, 'in any case, under .local too');
   assert.equal((await raw(p, '/index.html', 'evil.example')).status, 403, 'but not to a rebound name');
   assert.equal((await raw(p, '/index.html', 'evil.local.example')).status, 403, 'nor to a name that merely contains .local');
 });
