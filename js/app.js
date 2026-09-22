@@ -14,13 +14,17 @@
     wavBusy: false, lastSectionIdx: -1, lastAriaSecond: -1, queue: [], queueIndex: 0,
     mixStartedAt: performance.now(), sleepStopAt: null,
   };
-  const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
+  /** Shown in the About dialog. test/settings-contract.test.js pins it to package.json.
+   *  It is not sw.js's VERSION, which hashes the shell bytes rather than naming a release. */
+  const APP_VERSION = '1.0.0';
+  /** The header and queue selects offer exactly AN.storage's tables; these only label them. */
+  const THEME_LABELS = { system: 'System', dark: 'Dark', light: 'Light', black: 'OLED black' };
+  const VISUAL_LABELS = { on: 'On', off: 'Off' };
+  const queueEveryLabel = (v) => (v ? `${v} min` : 'The whole loop');
+  const crossfadeLabel = (v) => `${v} s`;
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
   const POMODOROS = [[0, 'Off'], [25, '25 + 5 min'], [50, '50 + 10 min'], [90, '90 + 20 min']];
   const BREAK_DUCK = { drums: 0.12, melody: 0.3, arp: 0.2, bass: 0.55, pads: 0.85 };
-  const VISUALS = [['on', 'On'], ['off', 'Off']];
-  const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
-  const CROSSFADES = [4, 8, 15, 30];
   const SLEEP_FADE = 20; // seconds of fade before the sleep timer stops playback
   const PRESETS = [
     ['Rainy window', { rain: 0.55, thunder: 0.12, wind: 0.1 }],
@@ -53,11 +57,15 @@
     buildSelect($('daypart'), DAYPARTS.map((d) => d[0]), (v) => DAYPARTS.find((d) => d[0] === v)[1], state.settings.daypart || '');
     buildSelect($('pomodoro'), POMODOROS.map((p) => p[0]), (v) => POMODOROS.find((p) => Number(p[0]) === Number(v))[1], 0);
     buildWavLengths();
-    buildSelect($('queueEvery'), QUEUE_EVERY.map((q) => q[0]), (v) => QUEUE_EVERY.find((q) => Number(q[0]) === Number(v))[1], AN.storage.prefs().queueEvery || 0);
-    buildSelect($('crossfade'), CROSSFADES, (v) => `${v} s`, AN.storage.prefs().crossfade || 8);
-    const savedQueue = AN.storage.prefs().queue;   // a preference is stored data too
-    state.queue = (Array.isArray(savedQueue) ? savedQueue : []).filter((id) => AN.storage.get(id));
+    const prefs = AN.storage.prefs();   // validated: every field is present and one of the options
+    buildSelect($('queueEvery'), AN.storage.QUEUE_MINUTES, queueEveryLabel, prefs.queueEvery);
+    buildSelect($('crossfade'), AN.storage.CROSSFADES, crossfadeLabel, prefs.crossfade);
+    // one pass over the library rather than a get() per id: a stored queue is a list
+    // someone else may have written, and get() re-reads the whole library each time
+    const known = new Set(AN.storage.list().map((m) => m.id));
+    state.queue = prefs.queue.filter((id) => known.has(id));
     state.queueIndex = 0;
+    $('aboutVersion').textContent = APP_VERSION;
     buildPresets();
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
@@ -69,7 +77,7 @@
     bind();
     renderPlan();
     renderStored();
-    if (AN.storage.prefs().quiet) setQuiet(true);
+    if (prefs.quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
     if (state.fromShare) toast('Playing a shared mix — save it to keep it');
     requestAnimationFrame(tickUI);
@@ -171,29 +179,38 @@
 
   // ---------- theme ----------
   function initTheme() {
-    buildSelect($('theme'), THEMES.map((t) => t[0]), (v) => THEMES.find((t) => t[0] === v)[1], AN.storage.prefs().theme || 'system');
-    applyTheme();
+    buildSelect($('theme'), Object.keys(AN.storage.THEMES), (v) => THEME_LABELS[v] || v, AN.storage.prefs().theme);
+    renderTheme();
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
-    if (mq && mq.addEventListener) mq.addEventListener('change', applyTheme);
+    if (mq && mq.addEventListener) mq.addEventListener('change', renderTheme);
   }
 
-  function applyTheme() {
+  /** 'system' is whatever the OS says, and the OS saying nothing is dark. */
+  function renderTheme() {
     const choice = $('theme').value || 'system';
     let theme = choice;
     if (choice === 'system') {
       theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
     document.documentElement.dataset.theme = theme;
-    setPref('theme', choice);
+  }
+
+  function applyTheme() {
+    renderTheme();
+    setPref('theme', $('theme').value || 'system');
   }
 
   // ---------- visualiser ----------
   function initVisuals() {
-    const stored = AN.storage.prefs().visuals;
-    const pref = stored === 'on' || stored === 'off' ? stored : (prefersReducedMotion() ? 'off' : 'on');
-    buildSelect($('visuals'), VISUALS.map((v) => v[0]), (v) => VISUALS.find((x) => x[0] === v)[1], pref);
+    buildSelect($('visuals'), Object.keys(AN.storage.VISUALS), (v) => VISUAL_LABELS[v] || v, visualsChoice());
     state.visual = new AN.Visualizer($('visual'), () => state.engine);
-    state.visual.setEnabled(pref === 'on');
+    state.visual.setEnabled($('visuals').value === 'on');
+  }
+
+  /** The stored choice or, while none has been made, what the OS asks for: this row is
+   *  the app's motion control, so a reduced-motion visitor starts with the visuals off. */
+  function visualsChoice() {
+    return AN.storage.prefs().visuals || (prefersReducedMotion() ? 'off' : 'on');
   }
 
   function applyVisuals() {
@@ -204,6 +221,28 @@
 
   function prefersReducedMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  // ---------- preferences ----------
+  /** Theme, visuals, quiet mode and the queue timing back to their defaults. Confirmed,
+   *  because nothing inside the app can undo it. It writes the preferences record only:
+   *  the queue lists the visitor's own mixes, and the library and the working mix are
+   *  other records, so all three are kept — and the controls are re-read from storage
+   *  rather than re-applied, since applyVisuals() would write the OS's answer back as a
+   *  choice. */
+  function resetPrefs() {
+    if (!confirm('Reset preferences to their defaults? Theme, visuals, quiet mode and the queue timing go back to how they started. Your saved mixes, the queue and the mix you are working on are kept.')) return;
+    if (!AN.storage.resetPrefs()) return storageRefused();
+    const p = AN.storage.prefs();
+    $('theme').value = p.theme;
+    renderTheme();
+    $('visuals').value = visualsChoice();
+    state.visual.setEnabled($('visuals').value === 'on');
+    if (document.body.classList.contains('quiet')) setQuiet(false);
+    buildSelect($('queueEvery'), AN.storage.QUEUE_MINUTES, queueEveryLabel, p.queueEvery);
+    buildSelect($('crossfade'), AN.storage.CROSSFADES, crossfadeLabel, p.crossfade);
+    state.mixStartedAt = performance.now();
+    toast('Preferences reset');
   }
 
   // ---------- offline ----------
@@ -232,7 +271,8 @@
   function setQuiet(on) {
     document.body.classList.toggle('quiet', on);
     setPref('quiet', on);
-    $('quiet').textContent = on ? 'Exit quiet mode' : 'Quiet mode';
+    // a toggle: the state is aria-pressed, and the label stays the same either way
+    $('quiet').setAttribute('aria-pressed', String(on));
   }
 
   // ---------- media session ----------
@@ -920,6 +960,9 @@
     $('visuals').addEventListener('change', applyVisuals);
     $('quiet').addEventListener('click', () => setQuiet(!document.body.classList.contains('quiet')));
     $('quietExit').addEventListener('click', () => setQuiet(false));
+    $('resetPrefs').addEventListener('click', resetPrefs);
+    $('about').addEventListener('click', () => $('aboutDialog').showModal());
+    $('aboutClose').addEventListener('click', () => $('aboutDialog').close());
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });

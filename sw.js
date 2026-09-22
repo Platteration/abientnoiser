@@ -13,7 +13,7 @@
    there to prevent. The deploy re-stamps the line below with the commit sha, so keep
    the prefix inside the literal rather than composing it. */
 const PREFIX = 'ambient-noiser-';
-const VERSION = 'ambient-noiser-a82ef1037565';
+const VERSION = 'ambient-noiser-24ec352d808d';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
   './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/app.js',

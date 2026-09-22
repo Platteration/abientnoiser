@@ -25,7 +25,9 @@
     <div class="toolbar">
       <label class="mini"><span>Theme</span><select id="theme"></select></label>
       <label class="mini"><span>Visuals</span><select id="visuals"></select></label>
-      <button id="quiet" type="button" class="ghost sm" title="Hide everything but the player (Q)">Quiet mode</button>
+      <button id="quiet" type="button" class="ghost sm" aria-pressed="false" title="Hide everything but the player (Q)">Quiet mode</button>
+      <button id="resetPrefs" type="button" class="ghost sm" title="Theme, visuals, quiet mode and the queue timing back to how they started">Reset preferences</button>
+      <button id="about" type="button" class="ghost sm" title="Version, licence and what stays on this device">About</button>
     </div>
   </header>
 
@@ -143,6 +145,15 @@
   </footer>
 
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="aboutDialog" class="about" aria-labelledby="aboutTitle">
+    <h2 id="aboutTitle">Ambient Noiser</h2>
+    <p class="version">Version <span id="aboutVersion"></span></p>
+    <p>Hour-long looping soundscapes, composed and played live in your browser with the Web Audio API — no samples, no server.</p>
+    <p>MIT licence · <a href="https://github.com/Platteration/abientnoiser" target="_blank" rel="noopener">source on GitHub</a></p>
+    <p class="hint">Nothing leaves your device: your mixes, queue and preferences live in this browser only, and there is no server to send them to. The one exception is a share link, which carries the whole mix in its URL — anyone you give it to gets the mix.</p>
+    <button id="aboutClose" type="button" class="ghost sm close">Close</button>
+  </dialog>
 
   <script src="js/prng.js"></script>
   <script src="js/timer.js"></script>

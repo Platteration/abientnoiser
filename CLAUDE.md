@@ -109,6 +109,27 @@ unwired, on every load, with no way back from inside the app.
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
 may use frames; the sleep timer, focus timer and queue may not.
 
+## Settings
+
+Three localStorage keys, named once in `js/storage.js` (`KEYS`) and pinned as literals by
+`test/settings-contract.test.js`: `ambientnoiser.mixes.v1` (the library),
+`ambientnoiser.autosave.v1` (the mix being worked on) and `ambientnoiser.prefs.v1` (the
+preferences). The preferences record holds `theme` (`system`, `dark`, `light`, `black`),
+`visuals` (`on`, `off`, or `null` for "not chosen", which follows `prefers-reduced-motion`
+— the Visuals row *is* this app's motion control), `quiet`, `queue` (ids of saved mixes),
+`queueEvery` and `crossfade`. `cleanPrefs(raw, fallback)` in the same file is the
+validator: every read and every write goes through it, the enum tables (`THEMES`,
+`VISUALS`, `QUEUE_MINUTES`, `CROSSFADES`) are looked up by own property, and a field that
+does not hold up falls back to its default on its own, never the record as a whole.
+`app.js` builds the header selects from those tables and only adds labels. "Reset
+preferences" in the header is confirmed with `window.confirm()` and writes the defaults
+to `prefs.v1` only: the queue stays (it lists the visitor's own mixes, which is not a
+preference), and the library and autosave are other records it never touches. The
+About dialog shows `APP_VERSION` from `js/app.js`, which the contract test pins to
+`package.json`; it is deliberately not `sw.js`'s `VERSION`, which hashes the shell bytes
+rather than naming a release. Header controls that toggle carry `aria-pressed`; one with
+no text carries an `aria-label`.
+
 ## Tests
 
 ```bash

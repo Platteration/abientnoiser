@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 let chromium;
 try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require(path.join(process.env.NODE_GLOBAL_MODULES || '/opt/node22/lib/node_modules', 'playwright'))); }
@@ -561,6 +562,56 @@ try {
     'the visuals choice survives a reload and matches what is drawn');
   check(restored.daypart === 'night', 'time of day survives a reload');
 
+  // Reset preferences asks first, then writes the preferences record only: the saved
+  // mix, the queue and the mix being worked on are the visitor's own and stay. About
+  // names the release from package.json, not the service worker's cache stamp.
+  const resetPage = await browser.newPage();
+  await resetPage.goto(`http://localhost:${port}/`);
+  await resetPage.waitForSelector('.seg');
+  await resetPage.selectOption('#theme', 'black');
+  await resetPage.selectOption('#crossfade', '30');
+  const queued = await resetPage.evaluate(() => {
+    AmbientNoiser.state.settings.seed = 'reset-keeps-me';
+    AmbientNoiser.recompose();
+    const mix = AN.storage.save('kept through reset', AmbientNoiser.state.settings);
+    AmbientNoiser.enqueue(mix.id);
+    return mix.id;
+  });
+  resetPage.once('dialog', (d) => d.dismiss());
+  await resetPage.click('#resetPrefs');
+  const declined = await resetPage.evaluate(() => ({ theme: AN.storage.prefs().theme, crossfade: AN.storage.prefs().crossfade }));
+  resetPage.once('dialog', (d) => d.accept());
+  await resetPage.click('#resetPrefs');
+  await resetPage.reload();
+  await resetPage.waitForSelector('.seg');
+  const afterReset = await resetPage.evaluate((id) => ({
+    theme: document.getElementById('theme').value,
+    crossfade: document.getElementById('crossfade').value,
+    stored: AN.storage.prefs(),
+    applied: document.documentElement.dataset.theme,
+    mixKept: !!AN.storage.get(id),
+    queueKept: AmbientNoiser.state.queue.includes(id),
+    seed: AN.storage.loadAutosave() && AN.storage.loadAutosave().seed,
+  }), queued);
+  check(declined.theme === 'black' && declined.crossfade === 30, 'declining the confirmation resets nothing');
+  check(afterReset.theme === 'system' && afterReset.crossfade === '8' && afterReset.stored.theme === 'system'
+    && afterReset.stored.crossfade === 8 && afterReset.applied !== 'black',
+    `reset returns the preferences to their defaults (theme ${afterReset.theme}, crossfade ${afterReset.crossfade})`);
+  check(afterReset.mixKept && afterReset.queueKept && afterReset.seed === 'reset-keeps-me',
+    `and keeps the saved mix, the queue and the mix being worked on (mix ${afterReset.mixKept}, queue ${afterReset.queueKept}, seed ${afterReset.seed})`);
+  await resetPage.click('#about');
+  const about = await resetPage.evaluate(() => ({
+    open: document.getElementById('aboutDialog').open,
+    version: document.getElementById('aboutVersion').textContent,
+    quietPressed: document.getElementById('quiet').getAttribute('aria-pressed'),
+  }));
+  await resetPage.click('#aboutClose');
+  const aboutClosed = await resetPage.evaluate(() => !document.getElementById('aboutDialog').open);
+  await resetPage.close();
+  check(about.open && about.version === pkg.version && aboutClosed,
+    `About opens, names version ${about.version} (package.json says ${pkg.version}) and closes`);
+  check(about.quietPressed === 'false', 'the quiet-mode toggle states its aria-pressed');
+
   // ambience one-shots keep going after the loop seam sends piece time backwards
   const wrapped2 = await page.evaluate(async () => {
     const s = AN.defaultSettings('ambient');
@@ -988,7 +1039,7 @@ try {
       if (wrap && wrap.textContent.trim()) return wrap.textContent.trim();
       const title = el.getAttribute('title');
       if (title && title.trim()) return title.trim();
-      if (el.tagName === 'BUTTON' && el.textContent.trim()) return el.textContent.trim();
+      if ((el.tagName === 'BUTTON' || el.tagName === 'A') && el.textContent.trim()) return el.textContent.trim();
       const ph = el.getAttribute('placeholder');
       return ph && ph.trim() ? ph.trim() : null;
     };
