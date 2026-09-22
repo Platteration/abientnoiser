@@ -333,6 +333,26 @@ test('the defaults and every enum value round-trip through cleanPrefs', () => {
   assert.equal(S.cleanPrefs({ theme: 'DARK' }, D).theme, 'system');
 });
 
+// The queue is a list written from outside too, and a record that repeats one real id
+// is not bounded by dropping ids the library lacks: twenty thousand copies of a saved
+// mix's id all survived that, and renderQueue() paid a library read per copy. The app's
+// own enqueue() refuses a duplicate, so a dedupe eats nothing the visitor built, and a
+// queue cannot name more distinct mixes than the library can hold.
+test('a stored queue is deduplicated and capped at the library ceiling where it is read', () => {
+  const S = AN.storage, D = S.PREF_DEFAULTS;
+  const copies = Array.from({ length: 20000 }, () => 'a');
+  assert.deepEqual(S.cleanPrefs({ queue: copies }, D).queue, ['a'], 'one id, however many times it is stored, is one entry');
+  const many = Array.from({ length: S.MAX_MIXES + 1 }, (_, i) => `id${i}`);
+  const kept = S.cleanPrefs({ queue: many }, D).queue;
+  assert.equal(kept.length, S.MAX_MIXES, 'no more entries than the library can hold distinct mixes');
+  assert.deepEqual(kept, many.slice(0, S.MAX_MIXES), 'the first ones, in order');
+  assert.deepEqual(S.cleanPrefs({ queue: ['b', 'a', 'b', 'c', 'a'] }, D).queue, ['b', 'a', 'c'], 'order is kept at the first occurrence');
+  withStorage(undefined, () => {
+    globalThis.localStorage.setItem(S.KEYS.prefs, JSON.stringify({ queue: copies }));
+    assert.deepEqual(S.prefs().queue, ['a'], 'and prefs() reads through the same bound');
+  });
+});
+
 // Reset is the preferences only. The queue lives in the same record but is a list of the
 // visitor's own mixes, not a preference; the library and the working mix are other
 // records, and neither is Reset's to touch.

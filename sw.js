@@ -13,7 +13,7 @@
    there to prevent. The deploy re-stamps the line below with the commit sha, so keep
    the prefix inside the literal rather than composing it. */
 const PREFIX = 'ambient-noiser-';
-const VERSION = 'ambient-noiser-994fb62816a0';
+const VERSION = 'ambient-noiser-b45494a071d9';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './manifest.webmanifest',
   './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/install.js', './js/app.js',
@@ -76,7 +76,14 @@ self.addEventListener('fetch', (e) => {
           e.waitUntil(caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => { /* no cache — the response still stands */ }));
         }
         return res;
-      }).catch(() => lookup(DOC).then((doc) => doc || lookup('./index.html')));
+      }).catch((err) => {
+        // Offline, the page itself still opens from the cache. Anything else that is
+        // not cached — a data file, a script added later — fails the way it would have
+        // without a worker, rather than being answered with the document's HTML as a
+        // 200 that JSON.parse or a script loader then trips over.
+        if (!navigate) throw err;
+        return lookup(DOC).then((doc) => doc || lookup('./index.html'));
+      });
     })
   );
 });

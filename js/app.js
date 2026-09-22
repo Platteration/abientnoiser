@@ -502,8 +502,10 @@
     list.innerHTML = '';
     $('queueEmpty').hidden = state.queue.length > 0;
     $('queueNow').disabled = state.queue.length === 0;
+    // one library read for the whole list: get() re-reads and re-validates it per call
+    const byId = new Map(AN.storage.list().map((m) => [m.id, m]));
     state.queue.forEach((id, i) => {
-      const mix = AN.storage.get(id);
+      const mix = byId.get(id);
       if (!mix) return;
       const st = AN.STYLES[mix.settings.style] || AN.STYLES.ambient;
       const li = document.createElement('li');

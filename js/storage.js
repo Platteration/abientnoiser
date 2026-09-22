@@ -74,10 +74,17 @@
   /** One of a list of numbers. includes() compares by SameValueZero, so the string '10'
    *  is not 10 and NaN matches nothing — a select's value is written back as a number. */
   const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
-  /** A list of mix ids: strings only, none longer than an id the library keeps. The
-   *  count is not capped here — an id that names no saved mix is dropped by the reader
-   *  before anything renders, so the library's own ceiling bounds what a queue can do. */
-  const idList = (v, fallback) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 40) : fallback.slice());
+  /** A list of mix ids: strings only, none longer than an id the library keeps, each
+   *  once, and no more of them than the library can hold distinct mixes. The reader
+   *  drops an id that names no saved mix, which bounds nothing when the record repeats
+   *  one real id twenty thousand times: every copy survived, and renderQueue() then
+   *  paid a library read per copy — 8 s a load. Bounded here, where the list is
+   *  written, per the invariant. Nothing of the visitor's is eaten: enqueue() refuses
+   *  a duplicate, so this app never writes one, and a queue can only ever name mixes
+   *  the library holds. */
+  const idList = (v, fallback) => (Array.isArray(v)
+    ? [...new Set(v.filter((x) => typeof x === 'string' && x.length <= 40))].slice(0, MAX_MIXES)
+    : fallback.slice());
 
   /** One preferences record, made safe field by field: a field that does not hold up
    *  falls back to its default on its own, never the record as a whole, so one stray

@@ -216,3 +216,17 @@ test('a cache that cannot be opened is a miss, not a dead page', async () => {
   const bothGone = loadWorker({ cached: { './index.html': 'CACHED DOC' }, openFails: true, network: false });
   await bothGone.respond('./?mix=abc', 'navigate');
 });
+
+// Offline, the document is the answer for a navigation and for nothing else. A
+// non-navigation GET for a path the cache does not hold — a data file, a script added
+// later — used to be answered with index.html as a 200, which JSON.parse or a script
+// loader then tripped over with an error that said nothing about being offline. It
+// fails as it would without a worker.
+test('offline, only a navigation falls back to the cached document', async () => {
+  const offline = loadWorker({ cached: { './index.html': 'CACHED DOC', './js/app.js': 'CACHED APP' }, network: false });
+  assert.equal((await offline.respond('./?mix=abc', 'navigate')).body, 'CACHED DOC', 'a navigation still opens the page');
+  assert.equal((await offline.respond('./js/app.js')).body, 'CACHED APP', 'a cached asset is still answered');
+  for (const url of ['./card-data.json', './js/not-in-shell.js', './icon-2.svg']) {
+    await assert.rejects(offline.respond(url), TypeError, `${url} is a network error, not the document`);
+  }
+});
