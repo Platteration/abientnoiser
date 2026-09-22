@@ -119,6 +119,8 @@ test('the dev server answers to its own names and refuses a rebound one', async 
   assert.equal((await raw(p, '/index.html', 'evil.example')).status, 403, 'a rebound name is refused');
   assert.equal((await raw(p, '/index.html', `evil.example:${p}`)).status, 403, 'with a port too');
   assert.equal((await raw(p, '/js/app.js', 'localhost.evil.example')).status, 403, 'and a name that merely starts with one of ours');
+  assert.equal((await raw(p, '/%zz', 'evil.example')).status, 403, 'refused before the path is even decoded, so a rebound page learns nothing from the status');
+  assert.equal((await raw(p, '/index.html', `laptop.local:${p}`)).status, 403, 'on loopback an mDNS name is as foreign as any other');
   const lan = lanAddress();
   if (lan) assert.equal((await raw(p, '/index.html', `${lan}:${p}`)).status, 403, 'on loopback, this machine\'s LAN address is as foreign as any other name');
   assert.equal((await raw(p, '/index.html', `localhost:${p}`)).status, 200, 'still alive after the refusals');
@@ -133,5 +135,7 @@ test('bound to a LAN address, the dev server answers to this machine\'s own addr
   if (!lan) t.diagnostic('no non-internal IPv4 interface on this machine; the LAN name itself is not exercised');
   else assert.equal((await raw(p, '/index.html', `${lan}:${p}`)).status, 200, `answers to ${lan}`);
   assert.equal((await raw(p, '/index.html', `localhost:${p}`)).status, 200, 'and still to localhost');
+  assert.equal((await raw(p, '/index.html', `laptop.local:${p}`)).status, 200, 'and to an mDNS name, which a phone types and no internet DNS can rebind');
   assert.equal((await raw(p, '/index.html', 'evil.example')).status, 403, 'but not to a rebound name');
+  assert.equal((await raw(p, '/index.html', 'evil.local.example')).status, 403, 'nor to a name that merely contains .local');
 });

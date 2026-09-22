@@ -38,6 +38,29 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 | `Q` `Esc` | quiet mode |
 | `Home` `End` `PgUp` `PgDn` | on the focused timeline: start, end, back or forward five minutes |
 
+## How it works
+
+```
+seed + style + time of day + edits
+        │
+        ▼
+    composer ──► plan (movements: key, mode, tempo, chords, layer levels, ambience weights)
+        │
+        ▼   transport walks 16th-note steps 2.5 s ahead of the clock
+        │
+   ┌────┴─────────────────┬──────────────────────┐
+ synths                 drums                 ambience
+ pad · drone · bell    lo-fi · brush        rain · thunder · wind · waves · creek
+ piano · e-piano       · electro            fire · birds · crickets · chimes
+ pluck · bass                               café · train · vinyl
+   └────┬─────────────────┴──────────────────────┘
+        ▼
+ layer gains (mood x mixer x duck) ─► pump bus ─► tape wobble ─► filter ─► saturation
+        └─► sends ─► hall / room reverb ──────────────────────────────► compressor ─► output
+```
+
+Every random decision is drawn from a generator keyed on `seed + movement + bar + step`, which is what makes a seed reproducible, a loop identical to the last, and an offline export the same as what you heard.
+
 ## Running it
 
 A static site with no build step and no dependencies.
@@ -48,7 +71,10 @@ npm start            # serves http://localhost:5173
 ```
 
 `npm start` listens on loopback only, because it serves the whole checkout. To reach
-it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`.
+it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`: the server
+then answers to this machine's addresses and to mDNS names such as `laptop.local`, and
+`ALLOWED_HOST=name` adds one more. Any other `Host` gets a 403, which is what keeps a
+page you visit from reaching the checkout by pointing its own name at 127.0.0.1.
 
 Opening `index.html` from disk also works, except for the offline service worker.
 
@@ -76,46 +102,26 @@ The browser suite renders every style offline and checks levels and onset, that 
 
 Both suites run in CI on every push (`.github/workflows/ci.yml`).
 
-## How it works
-
-```
-seed + style + time of day + edits
-        │
-        ▼
-    composer ──► plan (movements: key, mode, tempo, chords, layer levels, ambience weights)
-        │
-        ▼   transport walks 16th-note steps 2.5 s ahead of the clock
-        │
-   ┌────┴─────────────────┬──────────────────────┐
- synths                 drums                 ambience
- pad · drone · bell    lo-fi · brush        rain · thunder · wind · waves · creek
- piano · e-piano       · electro            fire · birds · crickets · chimes
- pluck · bass                               café · train · vinyl
-   └────┬─────────────────┴──────────────────────┘
-        ▼
- layer gains (mood x mixer x duck) ─► pump bus ─► tape wobble ─► filter ─► saturation
-        └─► sends ─► hall / room reverb ──────────────────────────────► compressor ─► output
-```
-
-Every random decision is drawn from a generator keyed on `seed + movement + bar + step`, which is what makes a seed reproducible, a loop identical to the last, and an offline export the same as what you heard.
+## Project layout
 
 | File | Role |
 | --- | --- |
-| `js/prng.js` | seeded random numbers |
-| `js/timer.js` | worker-driven ticker that survives a background tab |
+| `js/prng.js` | seeded random numbers (`AN.rng`) |
+| `js/timer.js` | `AN.ticker` — a worker interval that survives a background tab |
 | `js/theory.js` | modes, diatonic chords, voicings |
-| `js/composer.js` | styles, moods, dayparts, plan generation |
-| `js/audio/graph.js` | shared output, buses, reverbs, tape path, noise beds |
+| `js/composer.js` | styles, moods, dayparts, `AN.compose` → a plan |
+| `js/audio/graph.js` | shared `Output`, buses, reverbs, tape path, noise beds |
 | `js/audio/synths.js` | pad, drone, bell, electric piano, piano, pluck, bass |
-| `js/audio/drums.js` | three kits and their patterns |
+| `js/audio/drums.js` | three kits (`lofi`, `brush`, `electro`) and their patterns |
 | `js/audio/ambience.js` | twelve environment textures |
-| `js/audio/engine.js` | performance logic and the transport / scheduler |
-| `js/audio/recorder.js` | live recording and chunked WAV export |
+| `js/audio/engine.js` | `Engine` (performs a plan) and `Transport` (scheduler/clock) |
+| `js/audio/recorder.js` | live recording, chunked WAV export |
 | `js/storage.js` | library, autosave, preferences, share codes |
-| `js/visual.js` | canvas visualiser |
-| `js/card.js` | share card image |
-| `js/app.js` | UI |
-| `sw.js` | offline app shell |
+| `js/install.js` | the header's Install button behind `beforeinstallprompt` |
+| `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
+| `sw.js`, `manifest.webmanifest` | offline app shell and the install manifest |
+| `scripts/serve.js` | the dependency-free dev server |
+| `test/` | the node:test suites and the Chromium smoke tests |
 
 ## License
 

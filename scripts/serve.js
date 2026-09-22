@@ -35,7 +35,8 @@ const HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'].concat(process.
 // addresses, so every interface address is a name this server answers to — in both
 // spellings, since hostName() keeps the brackets of a bracketed IPv6 literal. A server on
 // loopback never adds them: there a LAN address in Host is as foreign as any other name.
-if (!['127.0.0.1', '::1', 'localhost'].includes(host)) {
+const lan = !['127.0.0.1', '::1', 'localhost'].includes(host);
+if (lan) {
   HOSTS.add(hostName(host)).add(hostName(`[${host}]`));
   for (const addresses of Object.values(os.networkInterfaces())) {
     for (const { address } of addresses || []) HOSTS.add(hostName(address)).add(hostName(`[${address}]`));
@@ -52,23 +53,26 @@ const server = http.createServer((req, res) => {
   req.on('error', () => {});
   res.on('error', () => {});
 
+  // Binding to loopback stops a network peer; it does not stop a browser that has been
+  // told the attacker's own name resolves to 127.0.0.1 (DNS rebinding). The rebound
+  // request still carries that name in Host, so this is the check that keeps a visited
+  // web page out of the checkout, and it is the first answer, before the path is even
+  // looked at. A request that claims no name at all cannot be a rebound one: a browser
+  // always sends Host and a page cannot set it, so the only clients this refuses are
+  // `curl --http1.0` and raw-socket probes on loopback. Off loopback, a name under
+  // .local is answered too: that is mDNS (RFC 6762), which is what a phone types for
+  // this machine and which no internet DNS can point at 127.0.0.1.
+  const name = hostName(req.headers.host);
+  if (name && !HOSTS.has(name) && !(lan && name.endsWith('.local'))) {
+    res.writeHead(403);
+    return res.end('Forbidden');
+  }
   let url;
   try {
     url = decodeURIComponent(req.url.split('?')[0]);
   } catch { // a malformed percent-escape is a bad request, not a reason to fall over
     res.writeHead(400);
     return res.end('Bad request');
-  }
-  // Binding to loopback stops a network peer; it does not stop a browser that has been
-  // told the attacker's own name resolves to 127.0.0.1 (DNS rebinding). The rebound
-  // request still carries that name in Host, so this is the check that keeps a visited
-  // web page out of the checkout. A request that claims no name at all cannot be a
-  // rebound one: a browser always sends Host and a page cannot set it, so the only
-  // clients this refuses are `curl --http1.0` and raw-socket probes on loopback.
-  const name = hostName(req.headers.host);
-  if (name && !HOSTS.has(name)) {
-    res.writeHead(403);
-    return res.end('Forbidden');
   }
   // fs.stat throws synchronously on a NUL byte, which would take the process with it.
   // Every other control character goes the same way, so a raw CR or LF cannot reach a

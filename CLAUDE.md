@@ -138,6 +138,8 @@ npm test               # node --test: PRNG, theory, composer, styles, app shell,
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
 npm run test:e2e       # Playwright + Chromium, end to end
+npm run test:conventions  # the repository's shape against CONVENTIONS.md
+npm run check          # npm test + test:conventions: the gate before a push
 npm run test:all
 ```
 
