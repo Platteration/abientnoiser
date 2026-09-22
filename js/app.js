@@ -50,6 +50,9 @@
     initTheme();
     initVisuals();
     registerServiceWorker();
+    // Chromium offers an install prompt once the page qualifies; Safari never does, so
+    // the button stays hidden until the event says otherwise (js/install.js).
+    AN.installPrompt(window, $('install'));
     buildStyles();
     buildSelect($('duration'), DURATIONS, (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS, (v) => `${v} min`, state.settings.sectionMin);

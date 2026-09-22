@@ -19,6 +19,7 @@ the Web Audio API. No build step, no server, no samples. `npm start` serves it;
 | `js/audio/engine.js` | `Engine` (performs a plan) and `Transport` (scheduler/clock) |
 | `js/audio/recorder.js` | live recording, chunked WAV export |
 | `js/storage.js` | library, autosave, preferences, share codes |
+| `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
 
 ## Invariants worth knowing
