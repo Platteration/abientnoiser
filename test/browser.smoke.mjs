@@ -1211,21 +1211,26 @@ try {
     }
     const answered = await swPage.evaluate(async () => {
       const get = (u) => fetch(u).then((r) => r.text()).catch((e) => `THREW ${e.message}`);
-      const widget = await get('/js/vendor-widget.js');
-      const doc = await get('./?mix=abc');
+      const widget = await get('/js/vendor-widget.js');   // only the co-tenant's cache holds this
+      const shell = await get('./js/prng.js');            // ours holds this one
+      const doc = await get('./?mix=abc');                // a fetch, so not a navigation
       return {
         coTenant: widget.includes('CO-TENANT WIDGET'),
-        ours: widget.includes('Ambient Noiser'),
-        docOurs: doc.includes('Ambient Noiser'),
+        widgetFailed: widget.startsWith('THREW'),
+        shellOurs: shell.includes('cyrb53'),
+        docFailed: doc.startsWith('THREW'),
+        docHtml: doc.includes('<title>'),
         excerpt: widget.slice(0, 40).replace(/\s+/g, ' '),
       };
     });
-    check(!answered.coTenant && answered.ours,
-      `offline, a URL a co-tenant cached is answered from this app's own cache (${answered.coTenant ? 'CO-TENANT BODY' : answered.excerpt}…)`);
-    check(answered.docOurs, 'and the document still comes from the cache with the query string ignored');
+    check(!answered.coTenant && answered.widgetFailed,
+      `offline, a URL only a co-tenant cached is never answered from their cache (${answered.coTenant ? 'CO-TENANT BODY' : answered.excerpt}…)`);
+    check(answered.shellOurs, "while a URL of our own shell is answered from this app's own cache");
+    check(answered.docFailed && !answered.docHtml,
+      'and a request that is not a navigation fails as it would with no worker, rather than answering HTML');
     await swPage.goto(`http://localhost:${swPort}/?mix=zzz`);
     await swPage.waitForSelector('.seg');
-    check((await swPage.title()).includes('Ambient Noiser'), `a share link navigates with no server at all (${await swPage.title()})`);
+    check((await swPage.title()).includes('Ambient Noiser'), `a share link navigates from the cache with no server at all, query string and all (${await swPage.title()})`);
   } finally {
     swServer.kill();
     await swCtx.close();
