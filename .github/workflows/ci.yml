@@ -42,3 +42,20 @@ jobs:
       - run: npm run test:textures
 
       - run: npm run test:e2e
+
+  # A job of its own, so an advisory published against an unchanged tree turns this
+  # red and leaves check meaning what it always meant. No install step: the audit
+  # reads the lockfile. --omit=dev because the gate is for what the app is built
+  # from, and today that is nothing: Playwright, the one dependency, is a test tool.
+  # high is the shared threshold (CONVENTIONS.md, "CI").
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - run: npm audit --omit=dev --audit-level=high
