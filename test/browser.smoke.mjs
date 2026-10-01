@@ -1,13 +1,14 @@
 /* Browser smoke test: loads the app in headless Chromium, renders audio offline
  * for every style and checks the output is audible, finite and not clipping,
  * then drives the live transport across a loop seam.
- * Run: npm run test:browser  (needs playwright + chromium available) */
+ * Run: npm run test:e2e  (needs playwright + chromium available) */
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 let chromium;
 try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require(path.join(process.env.NODE_GLOBAL_MODULES || '/opt/node22/lib/node_modules', 'playwright'))); }
@@ -561,6 +562,56 @@ try {
     'the visuals choice survives a reload and matches what is drawn');
   check(restored.daypart === 'night', 'time of day survives a reload');
 
+  // Reset preferences asks first, then writes the preferences record only: the saved
+  // mix, the queue and the mix being worked on are the visitor's own and stay. About
+  // names the release from package.json, not the service worker's cache stamp.
+  const resetPage = await browser.newPage();
+  await resetPage.goto(`http://localhost:${port}/`);
+  await resetPage.waitForSelector('.seg');
+  await resetPage.selectOption('#theme', 'black');
+  await resetPage.selectOption('#crossfade', '30');
+  const queued = await resetPage.evaluate(() => {
+    AmbientNoiser.state.settings.seed = 'reset-keeps-me';
+    AmbientNoiser.recompose();
+    const mix = AN.storage.save('kept through reset', AmbientNoiser.state.settings);
+    AmbientNoiser.enqueue(mix.id);
+    return mix.id;
+  });
+  resetPage.once('dialog', (d) => d.dismiss());
+  await resetPage.click('#resetPrefs');
+  const declined = await resetPage.evaluate(() => ({ theme: AN.storage.prefs().theme, crossfade: AN.storage.prefs().crossfade }));
+  resetPage.once('dialog', (d) => d.accept());
+  await resetPage.click('#resetPrefs');
+  await resetPage.reload();
+  await resetPage.waitForSelector('.seg');
+  const afterReset = await resetPage.evaluate((id) => ({
+    theme: document.getElementById('theme').value,
+    crossfade: document.getElementById('crossfade').value,
+    stored: AN.storage.prefs(),
+    applied: document.documentElement.dataset.theme,
+    mixKept: !!AN.storage.get(id),
+    queueKept: AmbientNoiser.state.queue.includes(id),
+    seed: AN.storage.loadAutosave() && AN.storage.loadAutosave().seed,
+  }), queued);
+  check(declined.theme === 'black' && declined.crossfade === 30, 'declining the confirmation resets nothing');
+  check(afterReset.theme === 'system' && afterReset.crossfade === '8' && afterReset.stored.theme === 'system'
+    && afterReset.stored.crossfade === 8 && afterReset.applied !== 'black',
+    `reset returns the preferences to their defaults (theme ${afterReset.theme}, crossfade ${afterReset.crossfade})`);
+  check(afterReset.mixKept && afterReset.queueKept && afterReset.seed === 'reset-keeps-me',
+    `and keeps the saved mix, the queue and the mix being worked on (mix ${afterReset.mixKept}, queue ${afterReset.queueKept}, seed ${afterReset.seed})`);
+  await resetPage.click('#about');
+  const about = await resetPage.evaluate(() => ({
+    open: document.getElementById('aboutDialog').open,
+    version: document.getElementById('aboutVersion').textContent,
+    quietPressed: document.getElementById('quiet').getAttribute('aria-pressed'),
+  }));
+  await resetPage.click('#aboutClose');
+  const aboutClosed = await resetPage.evaluate(() => !document.getElementById('aboutDialog').open);
+  await resetPage.close();
+  check(about.open && about.version === pkg.version && aboutClosed,
+    `About opens, names version ${about.version} (package.json says ${pkg.version}) and closes`);
+  check(about.quietPressed === 'false', 'the quiet-mode toggle states its aria-pressed');
+
   // ambience one-shots keep going after the loop seam sends piece time backwards
   const wrapped2 = await page.evaluate(async () => {
     const s = AN.defaultSettings('ambient');
@@ -707,6 +758,274 @@ try {
   check(lockRelease.wasLocked && lockRelease.released && !lockRelease.buttonActive,
     'seeking elsewhere releases the lock and updates the button');
 
+  // un-pausing inside pause()'s 350 ms fade-out window must not leave the lookahead
+  // that was already scheduled running underneath everything play() re-enters
+  const bounce = await page.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    const graph = AmbientNoiser.state.engine.graph;
+    t.pause();
+    await new Promise((r) => setTimeout(r, 800));  // past the 350 ms deferred kill
+    t.play();
+    await new Promise((r) => setTimeout(r, 1500)); // a full lookahead is now scheduled
+    const scheduled = new Set(graph.sources);
+    t.pause();
+    await new Promise((r) => setTimeout(r, 100));  // un-pause inside the window
+    t.play();
+    await new Promise((r) => setTimeout(r, 200));
+    const survivors = [...graph.sources].filter((src) => scheduled.has(src)).length;
+    const live = graph.sources.size;
+    t.pause();
+    await new Promise((r) => setTimeout(r, 800));
+    return { before: scheduled.size, survivors, live, pending: t.pendingKill, sourcesAfterPause: graph.sources.size };
+  });
+  check(bounce.before > 0 && bounce.survivors === 0 && bounce.live > 0
+    && bounce.pending == null && bounce.sourcesAfterPause === 0,
+    `un-pausing inside the fade window stops the voices scheduled before it (${bounce.survivors} of ${bounce.before} survived, ${bounce.live} freshly scheduled)`);
+
+  // Cmd/Ctrl/Alt combinations belong to the browser: printing must not skip a movement
+  const modifiers = await page.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    if (!t.playing) t.play();
+    await new Promise((r) => setTimeout(r, 400));
+    const press = (key, opts) => document.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key, bubbles: true }, opts)));
+    const at = () => ({ pos: t.now(), section: AN.sectionAt(AmbientNoiser.state.plan, t.now()).index });
+    const before = at();
+    press('p', { ctrlKey: true });
+    press('n', { metaKey: true });
+    press('ArrowRight', { altKey: true });
+    press('q', { ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 300));
+    const guarded = at();
+    const quiet = document.body.classList.contains('quiet');
+    press('n', {});                                // the same key on its own still works
+    await new Promise((r) => setTimeout(r, 300));
+    const plain = at();
+    t.pause();
+    return { before, guarded, plain, quiet };
+  });
+  check(modifiers.guarded.section === modifiers.before.section && !modifiers.quiet
+    && Math.abs(modifiers.guarded.pos - modifiers.before.pos) < 5,
+    `modifier combinations do not seek or toggle quiet mode (moved ${(modifiers.guarded.pos - modifiers.before.pos).toFixed(1)}s)`);
+  check(modifiers.plain.section !== modifiers.before.section, 'the unmodified shortcut still skips a movement');
+
+  // Safari reports 'interrupted', not 'suspended', after a call or a screen lock
+  const resumeStates = await page.evaluate(() => {
+    const tried = (state) => {
+      let calls = 0;
+      const promise = AN.resumeContext({ state, resume() { calls++; return Promise.resolve(); } });
+      return { calls, promise: !!promise };
+    };
+    return { interrupted: tried('interrupted'), suspended: tried('suspended'), running: tried('running'), closed: tried('closed') };
+  });
+  check(resumeStates.interrupted.calls === 1 && resumeStates.interrupted.promise
+    && resumeStates.suspended.calls === 1 && resumeStates.running.calls === 0 && resumeStates.closed.calls === 0,
+    'a context is resumed from any state that is not running, including Safari’s "interrupted"');
+
+  // a backup restores the library rather than appending a second copy of everything
+  const restore = await page.evaluate(() => {
+    const backup = JSON.stringify({ app: 'ambientnoiser', version: 1, mixes: [
+      { id: 'fixture-a', name: 'Backup A', createdAt: 1, settings: AN.defaultSettings('ambient') },
+      { id: 'fixture-b', name: 'Backup B', createdAt: 2, settings: AN.defaultSettings('lofi') },
+    ] });
+    const before = AN.storage.list().length;
+    const first = AN.storage.importJSON(backup);
+    const mid = AN.storage.list().length;
+    const again = AN.storage.importJSON(backup);
+    return { before, first, mid, again, end: AN.storage.list().length };
+  });
+  check(restore.first.added === 2 && restore.mid === restore.before + 2
+    && restore.again.added === 0 && restore.again.skipped === 2 && restore.end === restore.mid,
+    `importing a backup twice restores it once (${restore.first.added} added, then ${restore.again.skipped} skipped)`);
+
+  // a library file is attacker-controlled: it cannot fill the library, and a library
+  // that did get filled can be emptied from the UI rather than through site settings
+  const capped = await page.evaluate(() => {
+    const mixes = [];
+    for (let i = 0; i < 1200; i++) mixes.push({ id: `flood-${i}`, name: 'flood', createdAt: 1, settings: AN.defaultSettings('ambient') });
+    const res = AN.storage.importJSON(JSON.stringify({ app: 'ambientnoiser', version: 1, mixes }));
+    return { full: res.full, stored: AN.storage.list().length };
+  });
+  check(capped.stored === 500 && capped.full > 0,
+    `an imported file cannot grow the library past its ceiling (${capped.stored} stored, ${capped.full} left out)`);
+  page.once('dialog', (d) => d.accept());
+  await page.click('#libClear');
+  const emptied = await page.evaluate(() => ({ stored: AN.storage.list().length, items: document.querySelectorAll('#mixList li').length }));
+  check(emptied.stored === 0 && emptied.items === 0,
+    `Clear all mixes empties a filled library (${emptied.stored} stored, ${emptied.items} shown)`);
+
+  // The ceiling is the visitor's limit too, so it must not be the visitor's loss: at the
+  // limit Save is refused rather than quietly deleting their oldest mix, the page states
+  // the limit before they ever press it, and the import toast reports what is true of
+  // *this* library rather than quoting the constant.
+  const libraryFile = (n, from = 0) => Buffer.from(JSON.stringify({
+    app: 'ambientnoiser', version: 1,
+    mixes: Array.from({ length: n }, (_, i) => ({ id: `own-${i + from}`, name: `mine ${i + from}`, createdAt: i + from, settings: { seed: 's', style: 'ambient' } })),
+  }));
+  const importFile = async (buffer) => {
+    await page.evaluate(() => { document.getElementById('toast').textContent = ''; });
+    await page.setInputFiles('#importFile', { name: 'mixes.json', mimeType: 'application/json', buffer });
+    await page.waitForFunction(() => document.getElementById('toast').textContent.startsWith('Imported'));
+  };
+
+  await importFile(libraryFile(501));
+  const atCeiling = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    count: document.getElementById('libraryCount').textContent.trim(),
+    hint: document.getElementById('libraryFull').hidden ? '' : document.getElementById('libraryFull').textContent,
+  }));
+  check(atCeiling.stored === 500 && /500 of 500/.test(atCeiling.count) && /full/i.test(atCeiling.hint),
+    `the page shows the ceiling it enforces (heading “${atCeiling.count}”, hint ${atCeiling.hint ? 'shown' : 'MISSING'})`);
+  check(/1 left out/.test(atCeiling.toast) && /500 of 500/.test(atCeiling.toast),
+    `the import toast describes this library, not the constant (${atCeiling.toast})`);
+
+  await page.fill('#mixName', 'one more');
+  await page.click('#save');
+  const refused = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    mine: AN.storage.list().filter((m) => m.id.startsWith('own-')).length,
+    saved: AN.storage.list().some((m) => m.name === 'one more'),
+  }));
+  check(refused.stored === 500 && refused.mine === 500 && !refused.saved && /full/i.test(refused.toast),
+    `a full library refuses the save and keeps every mix the visitor had (${refused.toast})`);
+  await page.fill('#mixName', '');
+
+  // the upgrade path: a library built before the ceiling existed is over it, and every
+  // one of those mixes is the visitor's own. Nothing trims it — not on read, and not on
+  // the next Save, which is where a truncating save() would take a hundred of them.
+  await page.evaluate(() => {
+    const mixes = [];
+    for (let i = 0; i < 600; i++) mixes.push({ id: `old-${i}`, name: `old ${i}`, createdAt: i, settings: { seed: 's', style: 'ambient' } });
+    localStorage.setItem('ambientnoiser.mixes.v1', JSON.stringify(mixes));
+  });
+  await page.reload();
+  await page.waitForSelector('.seg');
+  await importFile(libraryFile(1, 9000));
+  const overImport = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    count: document.getElementById('libraryCount').textContent.trim(),
+  }));
+  check(overImport.stored === 600 && /600 of 500/.test(overImport.toast),
+    `the import toast tells the truth to the visitor who is over the ceiling (${overImport.toast})`);
+  await page.click('#save');
+  const overSave = await page.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    stored: AN.storage.list().length,
+    mine: AN.storage.list().filter((m) => m.id.startsWith('old-')).length,
+  }));
+  check(overSave.stored === 600 && overSave.mine === 600 && /full/i.test(overSave.toast),
+    `and their next Save refuses rather than destroying 100 of their mixes (${overSave.stored} stored, “${overSave.toast}”)`);
+  check(/600 of 500/.test(overImport.count), `the heading counts what is there, not the constant (“${overImport.count}”)`);
+  page.once('dialog', (d) => d.accept());
+  await page.click('#libClear');
+
+  // a browser that refuses site data must be reported, not silently ignored
+  const blocked = await page.evaluate(() => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function () { throw new Error('blocked'); };
+    try {
+      const out = {
+        autosave: AN.storage.autosave(AmbientNoiser.state.settings),
+        pref: AN.storage.setPref('probe', 1),
+        rename: AN.storage.rename('fixture-a', 'renamed'),
+        remove: AN.storage.remove('fixture-a'),
+        save: AN.storage.save('blocked', AmbientNoiser.state.settings),
+        importThrew: false,
+      };
+      try { AN.storage.importJSON(JSON.stringify({ mixes: [] })); } catch { out.importThrew = true; }
+      return out;
+    } finally { Storage.prototype.setItem = real; }
+  });
+  check(blocked.autosave === false && blocked.pref === false && blocked.rename === false
+    && blocked.remove === false && blocked.save === null && blocked.importThrew,
+    'every storage writer reports a refused write');
+
+  // a mode is rendered as text: today the whitelist is the only thing keeping markup
+  // out of that field, so a future mode with an unlucky name must still be escaped
+  const modeEscape = await page.evaluate(() => {
+    const NAME = '"><img src=y onerror="window.__modePwned=1">';
+    AN.theory.MODES[NAME] = AN.theory.MODES.dorian;
+    try {
+      AmbientNoiser.state.settings.edits = { 0: { mode: NAME } };
+      AmbientNoiser.recompose();
+      const list = document.getElementById('sectionList');
+      return {
+        kept: AmbientNoiser.state.plan.sections[0].mode === NAME, // the whitelist still allows a real mode
+        html: list.innerHTML.includes('<img'),
+        text: list.textContent.includes(NAME),
+        pwned: typeof window.__modePwned !== 'undefined',
+      };
+    } finally {
+      delete AN.theory.MODES[NAME];
+      AmbientNoiser.state.settings.edits = {};
+      AmbientNoiser.recompose();
+    }
+  });
+  check(modeEscape.kept && !modeEscape.html && !modeEscape.pwned && modeEscape.text,
+    'a mode name is escaped into the movement list rather than parsed as markup');
+
+  // inherited names ('constructor', '__proto__') are truthy on every plain table, so a
+  // whitelist that only tests for truth lets a share link through and wedges playback
+  const protoCode = await page.evaluate(() => {
+    const s = AN.defaultSettings('ambient');
+    s.seed = 'proto';
+    s.style = 'constructor';
+    s.daypart = 'constructor';
+    s.edits = { 0: { mood: 'constructor', mode: 'constructor' }, 1: { mode: '__proto__' }, 2: { mood: 'toString' } };
+    return AN.storage.encodeShare(s);
+  });
+  const protoPage = await browser.newPage();
+  const protoErrors = [];
+  protoPage.on('pageerror', (e) => protoErrors.push(String(e)));
+  protoPage.on('console', (m) => { if (m.type() === 'error') protoErrors.push(m.text()); });
+  await protoPage.goto(`http://localhost:${port}/?mix=${encodeURIComponent(protoCode)}`);
+  await protoPage.waitForSelector('.seg');
+  const proto = await protoPage.evaluate(async () => {
+    const t = AmbientNoiser.ensureEngine().transport;
+    t.play();
+    await new Promise((r) => setTimeout(r, 900));
+    const moved = t.now() > 0;
+    const modes = AmbientNoiser.state.plan.sections.slice(0, 3).map((x) => x.mode);
+    t.pause();
+    return {
+      style: AmbientNoiser.state.settings.style,
+      daypart: AmbientNoiser.state.settings.daypart,
+      edits: Object.keys(AmbientNoiser.state.settings.edits || {}).length,
+      knownModes: modes.every((m) => Object.prototype.hasOwnProperty.call(AN.theory.MODES, m)),
+      namedChords: AmbientNoiser.state.plan.sections[0].chordNames.every((n) => typeof n === 'string' && !n.includes('undefined')),
+      moved,
+    };
+  });
+  await protoPage.close();
+  check(proto.style === 'ambient' && proto.daypart === null && proto.edits === 0 && proto.knownModes
+    && proto.namedChords && proto.moved && protoErrors.length === 0,
+    `a share link of prototype names is rejected and the piece still plays${protoErrors.length ? ': ' + protoErrors[0] : ''}`);
+
+  // opening someone else's link must not overwrite the mix the visitor was building
+  const guard = await browser.newPage();
+  await guard.goto(`http://localhost:${port}/`);
+  await guard.waitForSelector('.seg');
+  const link = await guard.evaluate(() => {
+    AmbientNoiser.applySettings(Object.assign(AN.defaultSettings('lofi'), { seed: 'my-own-work' }));
+    return AN.storage.encodeShare(Object.assign(AN.defaultSettings('space'), { seed: 'someone-elses' }));
+  });
+  await guard.goto(`http://localhost:${port}/?mix=${encodeURIComponent(link)}`);
+  await guard.waitForSelector('.seg');
+  const shareGuard = await guard.evaluate(async () => {
+    const opened = AmbientNoiser.state.settings.seed;
+    window.dispatchEvent(new Event('beforeunload'));       // leaving without touching it
+    const afterExit = AN.storage.loadAutosave().seed;
+    AmbientNoiser.state.settings.seed = 'now-it-is-mine';  // but a change adopts it
+    AmbientNoiser.recompose();
+    return { opened, afterExit, afterEdit: AN.storage.loadAutosave().seed };
+  });
+  await guard.close();
+  check(shareGuard.opened === 'someone-elses' && shareGuard.afterExit === 'my-own-work'
+    && shareGuard.afterEdit === 'now-it-is-mine',
+    `a shared link plays without replacing the visitor's autosave until they change something (kept ${shareGuard.afterExit})`);
+
   // every control a screen reader can land on must have a name
   await page.evaluate(() => { document.querySelector('.movements').open = true; });
   const unnamed = await page.evaluate(() => {
@@ -720,7 +1039,7 @@ try {
       if (wrap && wrap.textContent.trim()) return wrap.textContent.trim();
       const title = el.getAttribute('title');
       if (title && title.trim()) return title.trim();
-      if (el.tagName === 'BUTTON' && el.textContent.trim()) return el.textContent.trim();
+      if ((el.tagName === 'BUTTON' || el.tagName === 'A') && el.textContent.trim()) return el.textContent.trim();
       const ph = el.getAttribute('placeholder');
       return ph && ph.trim() ? ph.trim() : null;
     };
@@ -753,6 +1072,9 @@ try {
   await shared.waitForSelector('.seg');
   const sanitised = await shared.evaluate((PAYLOAD) => {
     const st = AmbientNoiser.state.settings;
+    // a shared link is not autosaved until the visitor changes something, so adopt it
+    // deliberately: the point here is that the hostile blob survives the round trip safely
+    AmbientNoiser.recompose();
     // and again through the library import path
     AN.storage.importJSON(JSON.stringify({ mixes: [{ name: PAYLOAD, settings: st }] }));
     AmbientNoiser.state.queue = [];
@@ -822,6 +1144,124 @@ try {
     `tone is centred on 1 and spans ${toneUi.darkest}–${toneUi.brightest}`);
   check(Math.abs(toneUi.saved - toneUi.restored) < 1e-9 && Math.abs(toneUi.engineSees - toneUi.saved) < 1e-9,
     'tone survives a share link and reaches the engine');
+
+  // Stored data is untrusted input too. localStorage is keyed by *origin*, and a GitHub
+  // Pages project site shares one with every other app the account publishes, so
+  // "only the device owner can write that key" is not true here. cleanSettings runs on
+  // every write, which says nothing about a record written by something else; the read
+  // has to hold up. renderLibrary() used to run before bind(), so one record it could
+  // not render left every control on the page unwired, on every load, permanently.
+  const wreckedCtx = await browser.newContext();
+  const wrecked = await wreckedCtx.newPage();
+  const wreckedErrors = [];
+  wrecked.on('pageerror', (e) => wreckedErrors.push(String(e)));
+  await wrecked.goto(`http://localhost:${port}/`);
+  await wrecked.waitForSelector('.seg');
+  await wrecked.evaluate(() => {
+    localStorage.setItem('ambientnoiser.mixes.v1', JSON.stringify([
+      { id: 'a', name: 'no settings', createdAt: 1, settings: null },
+      { id: 'b', name: 'no levels', createdAt: 1, settings: { style: 'ambient' } },
+      { id: 'c', name: { toString: 'not callable' }, createdAt: 'soon', settings: { seed: { toString: 'nope' }, style: 'constructor', levels: 'lots' } },
+      'not a record', null, 42,
+      { name: 'no id', settings: { style: 'ambient' } },
+      { id: 'd', name: 'usable', createdAt: 2, settings: { seed: 'kept', style: 'lofi' } },
+    ]));
+    // and the other two keys, which are read before anything is drawn at all
+    localStorage.setItem('ambientnoiser.prefs.v1', JSON.stringify({ queue: 'not an array', queueEvery: {}, theme: { toString: 'nope' } }));
+    localStorage.setItem('ambientnoiser.autosave.v1', JSON.stringify({ seed: { toString: 'nope' }, style: { toString: 'nope' }, levels: 'lots', edits: 'none', volume: {} }));
+  });
+  await wrecked.reload();
+  await wrecked.waitForSelector('.seg');
+  await wrecked.click('#play');
+  await wrecked.waitForTimeout(700);
+  const stillAlive = await wrecked.evaluate(() => ({
+    playing: !!(window.AmbientNoiser.state.engine && window.AmbientNoiser.state.engine.transport.playing),
+    label: document.getElementById('play').textContent.trim(),
+    items: document.querySelectorAll('#mixList li').length,
+    text: document.getElementById('mixList').textContent,
+    segments: document.querySelectorAll('.seg').length,
+  }));
+  await wreckedCtx.close();
+  check(stillAlive.playing && stillAlive.label === '❚❚' && stillAlive.segments >= 10,
+    `a stored record this app did not write leaves the page working (play ${stillAlive.playing ? 'started' : 'DEAD'}, ${stillAlive.segments} movements drawn)`);
+  check(stillAlive.items === 3 && stillAlive.text.includes('usable'),
+    `and the records that cannot be rendered are dropped, not shown (${stillAlive.items} of 8 kept)`);
+  check(wreckedErrors.length === 0, `the wrecked-storage page raised no errors${wreckedErrors.length ? ': ' + wreckedErrors[0] : ''}`);
+
+  // Cache Storage is partitioned by origin as well, so the same co-tenancy applies to
+  // the offline shell. Whether reads are scoped is a property of the running worker —
+  // a regex over sw.js passes one that opens the wrong cache — so drive the real thing:
+  // plant a co-tenant's cache holding a response for a URL inside this app's scope and a
+  // stale cache of this app's own, take the network away, and see what comes back.
+  const swPort = 5600 + Math.floor(Math.random() * 300);
+  const swServer = spawn(process.execPath, [path.join(root, 'scripts/serve.js')], {
+    env: { ...process.env, PORT: String(swPort) }, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  let swUp = false;
+  for (let i = 0; i < 60 && !swUp; i++) {
+    try { swUp = (await fetch(`http://localhost:${swPort}/index.html`)).ok; } catch { /* not up yet */ }
+    if (!swUp) await new Promise((r) => setTimeout(r, 100));
+  }
+  const swCtx = await browser.newContext();
+  const swPage = await swCtx.newPage();
+  try {
+    if (!swUp) throw new Error(`the second static server never came up on port ${swPort}`);
+    // Block app.js on the first load so nothing registers a worker yet: the caches have
+    // to be in place before the install, or the activate under test never sees them.
+    await swCtx.route('**/js/app.js', (r) => r.abort());
+    await swPage.goto(`http://localhost:${swPort}/`);
+    await swPage.evaluate(async () => {
+      const tenant = await caches.open('another-app-v7');
+      await tenant.put('/js/vendor-widget.js', new Response('CO-TENANT WIDGET', { headers: { 'Content-Type': 'text/javascript' } }));
+      const stale = await caches.open('ambient-noiser-000000000000');   // a build of ours from before
+      await stale.put('/js/app.js', new Response('STALE APP'));
+    });
+    await swCtx.unroute('**/js/app.js');
+    await swPage.reload();
+    await swPage.waitForSelector('.seg');
+    const swept = await swPage.evaluate(async () => {
+      const reg = await navigator.serviceWorker.ready;   // no worker existed, so this is the new one
+      for (let i = 0; i < 200 && !navigator.serviceWorker.controller; i++) await new Promise((r) => setTimeout(r, 50));
+      return {
+        after: (await caches.keys()).sort(),
+        activated: !!(reg.active && reg.active.state === 'activated'),
+        controlled: !!navigator.serviceWorker.controller,
+      };
+    });
+    check(swept.activated && swept.controlled && swept.after.includes('another-app-v7') && !swept.after.includes('ambient-noiser-000000000000'),
+      `activate sweeps this app's stale cache and leaves the co-tenant's alone (${swept.after.join(', ')})`);
+
+    swServer.kill();
+    for (let i = 0; i < 50; i++) {                    // wait for the network to really be gone
+      try { await fetch(`http://localhost:${swPort}/index.html`); } catch { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const answered = await swPage.evaluate(async () => {
+      const get = (u) => fetch(u).then((r) => r.text()).catch((e) => `THREW ${e.message}`);
+      const widget = await get('/js/vendor-widget.js');   // only the co-tenant's cache holds this
+      const shell = await get('./js/prng.js');            // ours holds this one
+      const doc = await get('./?mix=abc');                // a fetch, so not a navigation
+      return {
+        coTenant: widget.includes('CO-TENANT WIDGET'),
+        widgetFailed: widget.startsWith('THREW'),
+        shellOurs: shell.includes('cyrb53'),
+        docFailed: doc.startsWith('THREW'),
+        docHtml: doc.includes('<title>'),
+        excerpt: widget.slice(0, 40).replace(/\s+/g, ' '),
+      };
+    });
+    check(!answered.coTenant && answered.widgetFailed,
+      `offline, a URL only a co-tenant cached is never answered from their cache (${answered.coTenant ? 'CO-TENANT BODY' : answered.excerpt}…)`);
+    check(answered.shellOurs, "while a URL of our own shell is answered from this app's own cache");
+    check(answered.docFailed && !answered.docHtml,
+      'and a request that is not a navigation fails as it would with no worker, rather than answering HTML');
+    await swPage.goto(`http://localhost:${swPort}/?mix=zzz`);
+    await swPage.waitForSelector('.seg');
+    check((await swPage.title()).includes('Ambient Noiser'), `a share link navigates from the cache with no server at all, query string and all (${await swPage.title()})`);
+  } finally {
+    swServer.kill();
+    await swCtx.close();
+  }
 
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();

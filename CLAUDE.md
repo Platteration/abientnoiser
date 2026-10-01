@@ -21,7 +21,9 @@ the Web Audio API. No build step, no server, no samples. `npm start` serves it;
 | `js/audio/engine.js` | `Engine` (performs a plan) and `Transport` (scheduler/clock) |
 | `js/audio/recorder.js` | live recording, chunked WAV export |
 | `js/storage.js` | library, autosave, preferences, share codes |
+| `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
+| `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`) |
 
 ## Invariants worth knowing
 
@@ -61,14 +63,83 @@ duck them; drums use the short room impulse, everything else the hall.
 
 **Anything from outside is untrusted.** Share links carry base64 JSON. Everything goes
 through `AN.storage.cleanSettings` before use, and anything rendered into HTML goes
-through `escapeHtml`.
+through `escapeHtml`. Whitelists are own-property lookups (`has(TABLE, id)`), never a
+bare `TABLE[id]`: every name on `Object.prototype` — `constructor`, `__proto__`,
+`toString` — is truthy on a plain table and used to pass as a valid style, mood or
+mode. A share link is not written to the autosave until the visitor changes something,
+so opening one cannot quietly replace the mix they were building.
 
 **Selects hold strings.** `buildSelect` compares with `String(v) === String(current)`.
 Comparing with `Number()` silently fails for every string-valued select.
 
+**The service worker's cache name is derived, not typed.** `sw.js` answers the shell
+from the cache, so a build only reaches an existing visitor when `VERSION` changes —
+and a byte-identical `sw.js` is never even reinstalled. `VERSION` is a hash of the
+shell files' contents (`test/shell.test.js` recomputes it and fails when it drifts,
+printing the value to paste in), and the Pages deploy re-stamps it with the commit
+sha. Shell hits are also revalidated in the background, and navigations match the one
+cached document with the query string ignored, so `?mix=…` links do not each add a
+copy. Cache Storage is partitioned by *origin*, not by worker scope, and a GitHub Pages
+project site shares its origin with every other app the account publishes. The two
+scopes differ, and both matter: the sweep on activate deletes only `PREFIX`-named
+caches, since an unfiltered `caches.keys()` sweep destroys the co-tenants' offline
+shells, while every read goes through *this build's own* `VERSION` cache rather than
+the origin-wide `caches.match()`, which can answer with a co-tenant's copy of one of
+our URLs. A read scoped to the prefix instead would search every past version's cache,
+which is exactly the staleness the derived `VERSION` exists to prevent. And a cache
+that will not open counts as a miss, not as a failure: `lookup` heads the fetch
+handler's chain, so an uncaught rejection there is a network error for every request
+the worker intercepts, the navigation included, online or offline.
+
+**Lists that grow from outside are bounded where they are written — and a bound must
+not eat the visitor's own work.** The library is capped in `js/storage.js` at
+`MAX_MIXES` records *and* `MAX_BYTES` of serialised JSON, because the count alone does
+not bound the size: one record carrying an edit for every movement serialises to fifty
+times a plain one. `importJSON` leaves out what does not fit and reports it as `full`.
+`save` throws at the ceiling rather than dropping the oldest mix: the tail of a full
+library is the visitor's own work, a truncation cannot be undone, and a refusal can —
+they delete something they chose. The ceiling is in the library hint and in the heading
+count before it ever bites, and the messages quote what this library holds rather than
+the constant, because nothing trims a library that is already over the ceiling. A cap
+applied where the list is *read* would leave the storage full; 'Clear all mixes' is the
+way back out, and `storageRefused()` points at it once the library is what filled the
+quota.
+
+**Stored data is untrusted input.** `localStorage` and Cache Storage are keyed by
+*origin*, which a GitHub Pages project site shares with every other app the account
+publishes, so "only this app writes that key" is not true here. `cleanSettings` on the
+way *in* says nothing about what comes back out: `storage.list()` drops a record it
+cannot render and cleans the rest, and `str`/`num`/`has` refuse to coerce an object —
+`String({toString: 'x'})` throws, as does using one as a property key. `init()` calls
+`bind()` before anything draws stored content, and the draw itself goes through
+`renderStored()`, which degrades to an empty library with a visible message: with
+`renderLibrary()` running first, one unreadable record left every control on the page
+unwired, on every load, with no way back from inside the app.
+
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
 may use frames; the sleep timer, focus timer and queue may not.
+
+## Settings
+
+Three localStorage keys, named once in `js/storage.js` (`KEYS`) and pinned as literals by
+`test/settings-contract.test.js`: `ambientnoiser.mixes.v1` (the library),
+`ambientnoiser.autosave.v1` (the mix being worked on) and `ambientnoiser.prefs.v1` (the
+preferences). The preferences record holds `theme` (`system`, `dark`, `light`, `black`),
+`visuals` (`on`, `off`, or `null` for "not chosen", which follows `prefers-reduced-motion`
+— the Visuals row *is* this app's motion control), `quiet`, `queue` (ids of saved mixes),
+`queueEvery` and `crossfade`. `cleanPrefs(raw, fallback)` in the same file is the
+validator: every read and every write goes through it, the enum tables (`THEMES`,
+`VISUALS`, `QUEUE_MINUTES`, `CROSSFADES`) are looked up by own property, and a field that
+does not hold up falls back to its default on its own, never the record as a whole.
+`app.js` builds the header selects from those tables and only adds labels. "Reset
+preferences" in the header is confirmed with `window.confirm()` and writes the defaults
+to `prefs.v1` only: the queue stays (it lists the visitor's own mixes, which is not a
+preference), and the library and autosave are other records it never touches. The
+About dialog shows `APP_VERSION` from `js/app.js`, which the contract test pins to
+`package.json`; it is deliberately not `sw.js`'s `VERSION`, which hashes the shell bytes
+rather than naming a release. Header controls that toggle carry `aria-pressed`; one with
+no text carries an `aria-label`.
 
 ## Tests
 
@@ -76,7 +147,9 @@ may use frames; the sleep timer, focus timer and queue may not.
 npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
-npm run test:browser   # Playwright + Chromium, end to end
+npm run test:e2e       # Playwright + Chromium, end to end
+npm run test:conventions  # the repository's shape against CONVENTIONS.md
+npm run check          # npm test + test:conventions: the gate before a push
 npm run test:all
 ```
 
@@ -87,8 +160,14 @@ the code deliberately and confirm the suite fails. Derive a bound from something
 than the value under test, or a bug will excuse itself (the swing bug did exactly
 that).
 
-The browser suite also feeds itself a hostile share link and library import, and
-checks every focusable control has an accessible name.
+The browser suite also feeds itself a hostile share link, a hostile library import and
+a hostile *stored* library (then clicks Play, because "no exception was logged" is not
+the same as "the app still works"), and checks every focusable control has an
+accessible name. It drives the service worker against a planted co-tenant cache with
+the dev server killed, which is the only way to tell a worker that reads its own cache
+from one that reads the origin's — a regex over `sw.js` cannot. `test/shell.test.js`
+loads `sw.js` with its globals stubbed and drives the real fetch handler for the cases
+a browser will not stage on demand, such as a cache that refuses to open.
 
 `test:textures` is the only check on how things actually sound. Nobody has heard this
 app; spectral balance is the closest available proxy. It puts the piece into a bright
@@ -113,3 +192,15 @@ these suites were written against, and CI installs with `npm ci`.
   16-bit step; Chromium's own float mixing is not reproducible run to run.
 - **Payments.** Any paid tier needs a backend and business decisions; nothing here
   assumes one.
+
+## Conventions
+
+This repository follows `CONVENTIONS.md`, which is identical in every platteration
+repository and pinned by the conventions test (`npm run test:conventions`, or
+`tests/test_conventions.py` in a Python repository): the script set (`test`,
+`typecheck`, `lint`, `check`, `test:e2e`, `test:all`), Node 22 via `.nvmrc`, one
+`.editorconfig`, ESLint per stack, the `ci.yml` shape, the documents every repository
+carries and the README skeleton. The repository's check command (`npm run check`, or
+`ruff check .` then `pytest -q` in a Python repository) is the gate before a push. To
+change a convention, change it in every repository in one pass and update the hashes in
+the test.

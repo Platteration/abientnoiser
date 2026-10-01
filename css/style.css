@@ -56,7 +56,7 @@ kbd { background: var(--card2); border: 1px solid var(--line); border-radius: 5p
 
 .logo { width: 26px; height: 26px; border-radius: 50%; background: conic-gradient(from 180deg, var(--accent), #3b4a66, var(--accent)); box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 50%, transparent); }
 .top { max-width: 1180px; margin: 0 auto; padding: 2rem 1.25rem 0.5rem; display: flex; gap: 1.5rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
-.toolbar { display: flex; gap: 0.5rem; align-items: flex-end; }
+.toolbar { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; }
 .mini { display: grid; gap: 0.2rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .mini select { padding: 0.3rem 0.5rem; font-size: 0.85rem; text-transform: none; letter-spacing: 0; }
 .top p { color: var(--muted); max-width: 62ch; margin: 0; }
@@ -190,6 +190,14 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 1.25rem 2.5rem; color: va
   .movements li { grid-template-columns: 3.8rem 10px 1fr; }
 }
 
+
+/* about */
+.about { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem 1.4rem; max-width: 34rem; width: calc(100% - 2rem); box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
+.about::backdrop { background: rgba(0,0,0,0.55); }
+.about h2 { font-family: var(--display); font-weight: 400; font-size: 1.5rem; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0 0 0.15rem; }
+.about .version { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.8rem; font-variant-numeric: tabular-nums; }
+.about a { color: var(--accent); }
+.about .close { margin-top: 0.9rem; }
 
 /* quiet mode */
 .quiet-exit { display: none; }

@@ -14,13 +14,17 @@
     wavBusy: false, lastSectionIdx: -1, lastAriaSecond: -1, queue: [], queueIndex: 0,
     mixStartedAt: performance.now(), sleepStopAt: null,
   };
-  const THEMES = [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['black', 'OLED black']];
+  /** Shown in the About dialog. test/settings-contract.test.js pins it to package.json.
+   *  It is not sw.js's VERSION, which hashes the shell bytes rather than naming a release. */
+  const APP_VERSION = '1.0.0';
+  /** The header and queue selects offer exactly AN.storage's tables; these only label them. */
+  const THEME_LABELS = { system: 'System', dark: 'Dark', light: 'Light', black: 'OLED black' };
+  const VISUAL_LABELS = { on: 'On', off: 'Off' };
+  const queueEveryLabel = (v) => (v ? `${v} min` : 'The whole loop');
+  const crossfadeLabel = (v) => `${v} s`;
   const DAYPARTS = [['', 'Off'], ['auto', 'Follow the clock'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['night', 'Night']];
   const POMODOROS = [[0, 'Off'], [25, '25 + 5 min'], [50, '50 + 10 min'], [90, '90 + 20 min']];
   const BREAK_DUCK = { drums: 0.12, melody: 0.3, arp: 0.2, bass: 0.55, pads: 0.85 };
-  const VISUALS = [['on', 'On'], ['off', 'Off']];
-  const QUEUE_EVERY = [[0, 'The whole loop'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min']];
-  const CROSSFADES = [4, 8, 15, 30];
   const SLEEP_FADE = 20; // seconds of fade before the sleep timer stops playback
   // Tone is a multiplier on the voice filters, so the slider is logarithmic:
   // centre is 1 (the sound as designed), the ends halve and double it.
@@ -41,13 +45,18 @@
   // ---------- init ----------
   function init() {
     const fromUrl = new URLSearchParams(location.search).get('mix');
-    state.settings = (fromUrl && AN.storage.decodeShare(fromUrl)) || AN.storage.loadAutosave() || AN.defaultSettings('ambient');
+    const shared = fromUrl ? AN.storage.decodeShare(fromUrl) : null;
+    state.fromShare = !!shared;
+    state.settings = shared || AN.storage.loadAutosave() || AN.defaultSettings('ambient');
     if (fromUrl) history.replaceState(null, '', location.pathname);
     state.plan = AN.compose(state.settings);
 
     initTheme();
     initVisuals();
     registerServiceWorker();
+    // Chromium offers an install prompt once the page qualifies; Safari never does, so
+    // the button stays hidden until the event says otherwise (js/install.js).
+    AN.installPrompt(window, $('install'));
     buildStyles();
     buildSelect($('duration'), DURATIONS, (v) => `${v} min`, state.settings.durationMin);
     buildSelect($('sectionMin'), SECTION_MINS, (v) => `${v} min`, state.settings.sectionMin);
@@ -55,10 +64,15 @@
     buildSelect($('daypart'), DAYPARTS.map((d) => d[0]), (v) => DAYPARTS.find((d) => d[0] === v)[1], state.settings.daypart || '');
     buildSelect($('pomodoro'), POMODOROS.map((p) => p[0]), (v) => POMODOROS.find((p) => Number(p[0]) === Number(v))[1], 0);
     buildWavLengths();
-    buildSelect($('queueEvery'), QUEUE_EVERY.map((q) => q[0]), (v) => QUEUE_EVERY.find((q) => Number(q[0]) === Number(v))[1], AN.storage.prefs().queueEvery || 0);
-    buildSelect($('crossfade'), CROSSFADES, (v) => `${v} s`, AN.storage.prefs().crossfade || 8);
-    state.queue = (AN.storage.prefs().queue || []).filter((id) => AN.storage.get(id));
+    const prefs = AN.storage.prefs();   // validated: every field is present and one of the options
+    buildSelect($('queueEvery'), AN.storage.QUEUE_MINUTES, queueEveryLabel, prefs.queueEvery);
+    buildSelect($('crossfade'), AN.storage.CROSSFADES, crossfadeLabel, prefs.crossfade);
+    // one pass over the library rather than a get() per id: a stored queue is a list
+    // someone else may have written, and get() re-reads the whole library each time
+    const known = new Set(AN.storage.list().map((m) => m.id));
+    state.queue = prefs.queue.filter((id) => known.has(id));
     state.queueIndex = 0;
+    $('aboutVersion').textContent = APP_VERSION;
     buildPresets();
     buildMixer($('musicMixer'), AN.MUSIC_LAYERS);
     buildMixer($('ambienceMixer'), AN.AMBIENCE_LAYERS);
@@ -66,12 +80,14 @@
     $('volume').value = Math.round(state.settings.volume * 100);
     $('tone').value = sliderFromTone(state.settings.tone == null ? 1 : state.settings.tone);
     applyAccent();
-    renderPlan();
-    renderLibrary();
-    renderQueue();
+    // bind() before anything draws stored content: a record this app did not write must
+    // not be able to leave the page with no control wired to it.
     bind();
-    if (AN.storage.prefs().quiet) setQuiet(true);
+    renderPlan();
+    renderStored();
+    if (prefs.quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
+    if (state.fromShare) toast('Playing a shared mix — save it to keep it');
     requestAnimationFrame(tickUI);
     state.logic = AN.ticker(500, tickLogic);
   }
@@ -171,34 +187,43 @@
 
   // ---------- theme ----------
   function initTheme() {
-    buildSelect($('theme'), THEMES.map((t) => t[0]), (v) => THEMES.find((t) => t[0] === v)[1], AN.storage.prefs().theme || 'system');
-    applyTheme();
+    buildSelect($('theme'), Object.keys(AN.storage.THEMES), (v) => THEME_LABELS[v] || v, AN.storage.prefs().theme);
+    renderTheme();
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
-    if (mq && mq.addEventListener) mq.addEventListener('change', applyTheme);
+    if (mq && mq.addEventListener) mq.addEventListener('change', renderTheme);
   }
 
-  function applyTheme() {
+  /** 'system' is whatever the OS says, and the OS saying nothing is dark. */
+  function renderTheme() {
     const choice = $('theme').value || 'system';
     let theme = choice;
     if (choice === 'system') {
       theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
     document.documentElement.dataset.theme = theme;
-    AN.storage.setPref('theme', choice);
+  }
+
+  function applyTheme() {
+    renderTheme();
+    setPref('theme', $('theme').value || 'system');
   }
 
   // ---------- visualiser ----------
   function initVisuals() {
-    const stored = AN.storage.prefs().visuals;
-    const pref = stored === 'on' || stored === 'off' ? stored : (prefersReducedMotion() ? 'off' : 'on');
-    buildSelect($('visuals'), VISUALS.map((v) => v[0]), (v) => VISUALS.find((x) => x[0] === v)[1], pref);
+    buildSelect($('visuals'), Object.keys(AN.storage.VISUALS), (v) => VISUAL_LABELS[v] || v, visualsChoice());
     state.visual = new AN.Visualizer($('visual'), () => state.engine);
-    state.visual.setEnabled(pref === 'on');
+    state.visual.setEnabled($('visuals').value === 'on');
+  }
+
+  /** The stored choice or, while none has been made, what the OS asks for: this row is
+   *  the app's motion control, so a reduced-motion visitor starts with the visuals off. */
+  function visualsChoice() {
+    return AN.storage.prefs().visuals || (prefersReducedMotion() ? 'off' : 'on');
   }
 
   function applyVisuals() {
     const on = $('visuals').value === 'on';
-    AN.storage.setPref('visuals', on ? 'on' : 'off');
+    setPref('visuals', on ? 'on' : 'off');
     state.visual.setEnabled(on);
   }
 
@@ -206,17 +231,56 @@
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
+  // ---------- preferences ----------
+  /** Theme, visuals, quiet mode and the queue timing back to their defaults. Confirmed,
+   *  because nothing inside the app can undo it. It writes the preferences record only:
+   *  the queue lists the visitor's own mixes, and the library and the working mix are
+   *  other records, so all three are kept — and the controls are re-read from storage
+   *  rather than re-applied, since applyVisuals() would write the OS's answer back as a
+   *  choice. */
+  function resetPrefs() {
+    if (!confirm('Reset preferences to their defaults? Theme, visuals, quiet mode and the queue timing go back to how they started. Your saved mixes, the queue and the mix you are working on are kept.')) return;
+    if (!AN.storage.resetPrefs()) return storageRefused();
+    const p = AN.storage.prefs();
+    $('theme').value = p.theme;
+    renderTheme();
+    $('visuals').value = visualsChoice();
+    state.visual.setEnabled($('visuals').value === 'on');
+    if (document.body.classList.contains('quiet')) setQuiet(false);
+    buildSelect($('queueEvery'), AN.storage.QUEUE_MINUTES, queueEveryLabel, p.queueEvery);
+    buildSelect($('crossfade'), AN.storage.CROSSFADES, crossfadeLabel, p.crossfade);
+    state.mixStartedAt = performance.now();
+    toast('Preferences reset');
+  }
+
   // ---------- offline ----------
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
+    // A page already under a worker keeps running the build it loaded, so say when a
+    // newer one has arrived. A first-ever registration is not an update.
+    const wasControlled = !!navigator.serviceWorker.controller;
+    let announced = false;
+    const announce = () => {
+      if (announced || !wasControlled) return;
+      announced = true;
+      toast('New version — reload to use it');
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', announce);
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => { if (sw.state === 'installed') announce(); });
+      });
+    }).catch(() => { /* offline support is optional */ });
   }
 
   // ---------- quiet mode ----------
   function setQuiet(on) {
     document.body.classList.toggle('quiet', on);
-    AN.storage.setPref('quiet', on);
-    $('quiet').textContent = on ? 'Exit quiet mode' : 'Quiet mode';
+    setPref('quiet', on);
+    // a toggle: the state is aria-pressed, and the label stays the same either way
+    $('quiet').setAttribute('aria-pressed', String(on));
   }
 
   // ---------- media session ----------
@@ -337,7 +401,35 @@
   }
 
   // ---------- settings changes ----------
-  function autosave() { AN.storage.autosave(state.settings); }
+  /** Every writer returns false when the browser refuses site data (private mode, a
+   *  full quota). Say so once: a fader move autosaves on every drag, and five copies
+   *  of the same bad news is worse than one. */
+  let storageWarned = false;
+  /** Why a write was refused. A browser blocking site data is the usual answer, but a
+   *  library big enough to have filled the quota is the one with a remedy, so measure it
+   *  and name the button that clears it rather than blaming the browser. */
+  function storageRefusedReason() {
+    const mixes = AN.storage.list();
+    const kb = Math.round(JSON.stringify(mixes).length / 1024);
+    return kb > 500
+      ? `your ${mixes.length} saved mixes are using ${kb} KB — export a backup, then Clear all mixes`
+      : 'this browser is blocking local storage';
+  }
+  function storageRefused() {
+    if (storageWarned) return;
+    storageWarned = true;
+    toast(`Nothing will be kept — ${storageRefusedReason()}`);
+  }
+  function setPref(key, value) { if (!AN.storage.setPref(key, value)) storageRefused(); }
+
+  function autosave() {
+    state.fromShare = false; // changing anything adopts a shared mix as your own
+    if (!AN.storage.autosave(state.settings)) storageRefused();
+  }
+
+  /** Leaving the page keeps the working mix — unless this visit is only *playing* a
+   *  shared link, which must not overwrite the mix the visitor was building. */
+  function autosaveOnExit() { if (!state.fromShare) autosave(); }
 
   function setStyle(id) {
     if (!AN.STYLES[id]) return;
@@ -406,9 +498,9 @@
 
   // ---------- queue ----------
   function saveQueue() {
-    AN.storage.setPref('queue', state.queue);
-    AN.storage.setPref('queueEvery', Number($('queueEvery').value) || 0);
-    AN.storage.setPref('crossfade', Number($('crossfade').value) || 8);
+    setPref('queue', state.queue);
+    setPref('queueEvery', Number($('queueEvery').value) || 0);
+    setPref('crossfade', Number($('crossfade').value) || 8);
   }
 
   function renderQueue() {
@@ -416,8 +508,10 @@
     list.innerHTML = '';
     $('queueEmpty').hidden = state.queue.length > 0;
     $('queueNow').disabled = state.queue.length === 0;
+    // one library read for the whole list: get() re-reads and re-validates it per call
+    const byId = new Map(AN.storage.list().map((m) => [m.id, m]));
     state.queue.forEach((id, i) => {
-      const mix = AN.storage.get(id);
+      const mix = byId.get(id);
       if (!mix) return;
       const st = AN.STYLES[mix.settings.style] || AN.STYLES.ambient;
       const li = document.createElement('li');
@@ -551,7 +645,7 @@
         <span class="swatch" style="background:hsl(${s.hue} 45% ${28 + s.intensity * 30}%)"></span>
         <span class="sname">${escapeHtml(s.name)}${s.edited ? ' <span class="pill">edited</span>' : ''}</span>
         <button type="button" class="edit" title="Change this movement">✎</button>
-        <span class="sinfo">${s.keyName} ${s.mode} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
+        <span class="sinfo">${escapeHtml(s.keyName)} ${escapeHtml(s.mode)} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
       li.querySelector('.jump').addEventListener('click', () => seekTo(s.start));
       li.querySelector('.edit').addEventListener('click', () => openEditor(s.index));
       list.appendChild(li);
@@ -705,11 +799,43 @@
   }
 
   // ---------- library ----------
+  /** Everything that draws what is in storage goes through here at startup. The records
+   *  are not necessarily this app's — a GitHub Pages project site shares its origin, and
+   *  so its localStorage, with every other app the account publishes — so storage.list()
+   *  drops what it cannot use and this catches whatever still gets through. A throw here
+   *  used to happen before bind(), which left every control on the page unwired, on
+   *  every load, with no way back from inside the app. An empty library and a message
+   *  are recoverable; an inert page is not. */
+  function renderStored() {
+    try {
+      renderLibrary();
+      renderQueue();
+    } catch {
+      state.queue = [];
+      $('mixList').innerHTML = '';
+      $('queueList').innerHTML = '';
+      $('libraryEmpty').hidden = true;
+      $('libraryBroken').hidden = false;
+      $('queueEmpty').hidden = false;
+      $('queueNow').disabled = true;
+    }
+  }
+
   function renderLibrary() {
     const list = $('mixList');
     const mixes = AN.storage.list();
     list.innerHTML = '';
+    $('libraryBroken').hidden = true;
     $('libraryEmpty').hidden = mixes.length > 0;
+    // The ceiling is visible from the first save, not only once it bites: Save refuses
+    // at the limit rather than dropping the oldest mix, and a visitor who arrives with
+    // more than the limit already stored keeps every one of them.
+    $('libraryCount').textContent = mixes.length ? `— ${mixes.length} of ${AN.storage.MAX_MIXES} saved` : '';
+    $('libraryFull').hidden = mixes.length < AN.storage.MAX_MIXES;
+    if (mixes.length >= AN.storage.MAX_MIXES) {
+      $('libraryFull').textContent = `Library is full — ${mixes.length} of ${AN.storage.MAX_MIXES} mixes. `
+        + 'Saving a new one is refused rather than dropping an old one: delete a mix, or export a backup and use Clear all mixes.';
+    }
     for (const m of mixes) {
       const st = AN.STYLES[m.settings.style] || AN.STYLES.ambient;
       const env = AN.AMBIENCE_LAYERS.filter((l) => m.settings.levels[l.id] > 0).map((l) => l.name.toLowerCase()).join(', ');
@@ -727,7 +853,7 @@
       li.querySelector('.share').addEventListener('click', () => copyShare(m.settings));
       li.querySelector('.del').addEventListener('click', () => {
         if (!confirm(`Delete “${m.name}”?`)) return;
-        AN.storage.remove(m.id);
+        if (!AN.storage.remove(m.id)) storageRefused();
         state.queue = state.queue.filter((q) => q !== m.id);
         saveQueue();
         renderLibrary();
@@ -735,6 +861,16 @@
       });
       list.appendChild(li);
     }
+  }
+
+  /** What is true of *this* library rather than of the constant. Nothing shrinks a
+   *  library that is already over the ceiling, so the one visitor for whom the cap
+   *  actually matters must not be told it holds 500 while they can see 13,000. */
+  function leftOutNote(full) {
+    const n = AN.storage.list().length;
+    return n >= AN.storage.MAX_MIXES
+      ? `${full} left out — the library is full (${n} of ${AN.storage.MAX_MIXES}); Clear all mixes to start over`
+      : `${full} left out — no room for them (${n} mixes stored)`;
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -816,9 +952,8 @@
   function resumeIfInterrupted() {
     const engine = state.engine;
     if (document.hidden || !engine || !engine.transport.playing) return;
-    if (engine.ctx.state === 'suspended' && engine.ctx.resume) {
-      engine.ctx.resume().then(() => engine.transport.schedule()).catch(() => { /* needs a fresh gesture */ });
-    }
+    const resumed = AN.resumeContext(engine.ctx);
+    if (resumed) resumed.then(() => engine.transport.schedule()).catch(() => { /* needs a fresh gesture */ });
   }
 
   let toastTimer = null;
@@ -836,6 +971,9 @@
     $('visuals').addEventListener('change', applyVisuals);
     $('quiet').addEventListener('click', () => setQuiet(!document.body.classList.contains('quiet')));
     $('quietExit').addEventListener('click', () => setQuiet(false));
+    $('resetPrefs').addEventListener('click', resetPrefs);
+    $('about').addEventListener('click', () => $('aboutDialog').showModal());
+    $('aboutClose').addEventListener('click', () => $('aboutDialog').close());
     $('dice').addEventListener('click', () => { state.settings.seed = AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('seed').addEventListener('change', () => { state.settings.seed = $('seed').value.trim() || AN.randomSeed(); $('seed').value = state.settings.seed; recompose(); });
     $('duration').addEventListener('change', () => { state.settings.durationMin = Number($('duration').value); recompose(); });
@@ -875,6 +1013,7 @@
       seekTo(((e.clientX - r.left) / r.width) * state.plan.duration);
     });
     $('timeline').addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return; // Cmd/Ctrl/Alt belong to the browser
       const keys = {
         Home: () => seekTo(0),
         End: () => seekTo(state.plan.duration - 1),
@@ -887,9 +1026,13 @@
     });
     $('save').addEventListener('click', () => {
       const name = $('mixName').value.trim() || defaultMixName();
-      const saved = AN.storage.save(name, state.settings);
+      let saved;
+      // A full library refuses the new mix instead of dropping the oldest one, and says
+      // so in the same breath: deleting the visitor's own work is not a save.
+      try { saved = AN.storage.save(name, state.settings); }
+      catch (e) { return toast(e.message); }
       renderLibrary();
-      if (!saved) return toast('Could not save — this browser is blocking local storage');
+      if (!saved) return toast(`Could not save — ${storageRefusedReason()}`);
       $('mixName').value = '';
       toast(`Saved “${name}”`);
     });
@@ -911,10 +1054,27 @@
       AN.download(new Blob([AN.storage.exportAll()], { type: 'application/json' }), 'ambient-noiser-mixes.json');
     });
     $('import').addEventListener('click', () => $('importFile').click());
+    $('libClear').addEventListener('click', () => {
+      const n = AN.storage.list().length;
+      if (!n) return toast('Nothing saved yet');
+      if (!confirm(`Delete all ${n} saved mix${n === 1 ? '' : 'es'}? This cannot be undone.`)) return;
+      if (!AN.storage.clear()) return storageRefused();
+      state.queue = [];
+      state.queueIndex = 0;
+      saveQueue();
+      renderLibrary();
+      renderQueue();
+      toast(`Deleted ${n} mix${n === 1 ? '' : 'es'}`);
+    });
     $('importFile').addEventListener('change', async () => {
       const f = $('importFile').files[0];
       if (!f) return;
-      try { const n = AN.storage.importJSON(await f.text()); renderLibrary(); toast(`Imported ${n} mix${n === 1 ? '' : 'es'}`); }
+      try {
+        const { added, skipped, full } = AN.storage.importJSON(await f.text());
+        renderLibrary();
+        toast(`Imported ${added} mix${added === 1 ? '' : 'es'}${skipped ? ` · ${skipped} already here` : ''}`
+          + (full ? ` · ${leftOutNote(full)}` : ''));
+      }
       catch (e) { toast(`Import failed: ${e.message}`); }
       $('importFile').value = '';
     });
@@ -923,6 +1083,7 @@
     $('wavCancel').addEventListener('click', () => { state.wavCancel = true; $('wavStatus').textContent = 'Cancelling…'; });
 
     document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return; // Cmd+P prints, it does not skip a movement
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button' && e.key !== ' ') return;
       if (e.key === ' ' && tag !== 'button') { e.preventDefault(); togglePlay(); }
@@ -933,7 +1094,7 @@
       else if (e.key === 'n' || e.key === 'N') jumpMovement(1);
       else if (e.key === 'p' || e.key === 'P') jumpMovement(-1);
     });
-    window.addEventListener('beforeunload', autosave);
+    window.addEventListener('beforeunload', autosaveOnExit);
     // mobile suspends the audio context on interruptions; pick playback back up
     document.addEventListener('visibilitychange', resumeIfInterrupted);
     window.addEventListener('focus', resumeIfInterrupted);

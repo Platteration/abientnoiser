@@ -22,12 +22,12 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 - **Queue with crossfade** — line up saved mixes and they fade from one into the next, whole loop by whole loop or on a timer. Good for a working day.
 - **Tone** — one control that opens or closes the voice filters, from half to double. The music is deliberately dark (in Ambient Drift the octave above 250 Hz sits about 23 dB below the one below it), which suits pads but may read as dull on some systems; the centre of the slider is the sound as designed, and moving it right raises Ambient Drift's spectral centroid from 230 to 305 Hz and Lo-fi's from 620 to 980.
 - **Quiet mode, visualiser, themes** — hide everything but the player, watch slow drifting bands coloured by the current movement, and pick system, dark, light or OLED black.
-- **Sleep timer** that fades out rather than cutting, media keys and lock-screen controls, and keyboard shortcuts. Timers keep running while the tab is in the background, which is the whole point.
+- **Sleep timer** that fades out rather than cutting, media keys and lock-screen controls, and keyboard shortcuts. Timers keep running while the tab is in the background, which is the whole point — on desktop and on Android. iOS is the exception: Safari suspends a Web Audio session when the screen locks, so playback and the timers stop there until you come back to the tab, and the lock screen shows no controls.
 - **Accessible and considerate** — the timeline is a keyboard slider, movement changes are announced, focus is visible, and `prefers-reduced-motion` is honoured. Under heavy load the incidental one-shots thin out so musical notes never drop.
 
 **Keeping it**
 
-- **Save mixes** to a browser library, copy a share link that recreates one exactly, export or import the library as JSON, and save a picture of a mix as a PNG card.
+- **Save mixes** to a browser library — up to 500 of them, after which Save is refused rather than dropping an older mix, so nothing you saved disappears without you deleting it. Copy a share link that recreates a mix exactly, export or import the library as JSON (one button empties it), and save a picture of a mix as a PNG card.
 - **Save as audio** — record what you hear in real time, or export the loop as a WAV rendered offline. Long exports render in five-minute chunks with a progress bar and a cancel button, so even a full hour fits in memory. Rendering is faster than real time, but not by a huge margin once the environment layers are on: roughly 7x for music alone, 3.5x for a typical mix, 2x with all twelve textures running — so a full hour takes something like fifteen to thirty minutes. The cost is the sheer number of short one-shot voices; it is the audio graph, not the composer.
 - **Works offline** — the app installs as a PWA and runs with no network at all.
 
@@ -38,39 +38,6 @@ Hour-long, seamlessly looping soundscapes for work, study and sleep — generate
 | `N` `P` | next / previous movement |
 | `Q` `Esc` | quiet mode |
 | `Home` `End` `PgUp` `PgDn` | on the focused timeline: start, end, back or forward five minutes |
-
-## Run it
-
-A static site with no build step and no dependencies.
-
-```bash
-npm start            # serves http://localhost:5173
-# or: python3 -m http.server 5173
-```
-
-Opening `index.html` from disk also works, except for the offline service worker.
-
-### Deploy
-
-A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** and every push to `main` publishes the app.
-
-## Tests
-
-```bash
-npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
-npm run test:musical   # every style's whole loop, checked for wrong notes and wrong timing
-npm run test:textures  # each environment texture, checked against the sound it claims to be
-npm run test:browser   # Playwright + Chromium, end to end
-npm run test:all       # all four
-```
-
-`test:musical` schedules all eight styles end to end with the synths and drum voices stubbed out — around 58,000 notes and hits — and checks every one is in the key of the movement that asked for it, inside its layer's register, a real MIDI number, and landing on its own step, swung forward and never early. A one-semitone or one-step error anywhere fails it.
-
-`test:textures` is the closest thing here to listening. It renders each of the twelve environment textures on its own and measures where its energy actually sits: rain, creek, birds, crickets, chimes and vinyl must be bright; wind, waves, fire, train and café must be low; thunder is counted rather than measured, being far too rare to catch in a short window. It also checks the tone control genuinely moves the spectrum. It exists because a 50 Hz turntable rumble was quietly carrying 87% of the vinyl layer's energy.
-
-The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
-
-Both suites run in CI on every push (`.github/workflows/ci.yml`).
 
 ## How it works
 
@@ -95,23 +62,71 @@ seed + style + time of day + edits
 
 Every random decision is drawn from a generator keyed on `seed + movement + bar + step`, which is what makes a seed reproducible, a loop identical to the last, and an offline export the same as what you heard.
 
+## Running it
+
+A static site with no build step and no dependencies.
+
+```bash
+npm start            # serves http://localhost:5173
+# or: python3 -m http.server 5173
+```
+
+`npm start` listens on loopback only, because it serves the whole checkout. To reach
+it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`: the server
+then answers to this machine's addresses, its hostname and mDNS names such as
+`laptop.local`, and reads its interfaces again on a miss, so a Wi-Fi joined after the
+start still works. Reaching it any other way — a port forward, a tunnel, a name your
+router hands out — needs that address in `ALLOWED_HOST` (a comma-separated list, ports
+ignored). Any other `Host` gets a 403, and one line on the terminal the first time that
+name is seen, which is what keeps a page you visit from reaching the checkout by
+pointing its own name at 127.0.0.1.
+
+Opening `index.html` from disk also works, except for the offline service worker.
+
+### Deploy
+
+A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** and every push to `main` publishes the app.
+
+## Development
+
+```bash
+npm test                  # node --test: PRNG, theory, composer, styles, app shell, dev server
+npm run test:conventions  # the repository's shape against CONVENTIONS.md
+npm run check             # the two above: the gate before a push
+npm run test:musical      # every style's whole loop, checked for wrong notes and wrong timing
+npm run test:textures     # each environment texture, checked against the sound it claims to be
+npm run test:e2e          # Playwright + Chromium, end to end
+npm run test:all          # all of the above
+```
+
+`test:musical` schedules all eight styles end to end with the synths and drum voices stubbed out — around 58,000 notes and hits — and checks every one is in the key of the movement that asked for it, inside its layer's register, a real MIDI number, and landing on its own step, swung forward and never early. A one-semitone or one-step error anywhere fails it.
+
+`test:textures` renders each of the twelve environment textures on its own and measures where its energy actually sits: rain, creek, birds, crickets, chimes and vinyl must be bright; wind, waves, fire, train and café must be low; thunder is counted rather than measured, being far too rare to catch in a short window. It also checks the tone control genuinely moves the spectrum. It exists because a 50 Hz turntable rumble was quietly carrying 87% of the vinyl layer's energy.
+
+The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
+
+Both suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile.
+
+## Project layout
+
 | File | Role |
 | --- | --- |
-| `js/prng.js` | seeded random numbers |
-| `js/timer.js` | worker-driven ticker that survives a background tab |
+| `js/prng.js` | seeded random numbers (`AN.rng`) |
+| `js/timer.js` | `AN.ticker` — a worker interval that survives a background tab |
 | `js/theory.js` | modes, diatonic chords, voicings |
-| `js/composer.js` | styles, moods, dayparts, plan generation |
-| `js/audio/graph.js` | shared output, buses, reverbs, tape path, noise beds |
+| `js/composer.js` | styles, moods, dayparts, `AN.compose` → a plan |
+| `js/audio/graph.js` | shared `Output`, buses, reverbs, tape path, noise beds |
 | `js/audio/synths.js` | pad, drone, bell, electric piano, piano, pluck, bass |
-| `js/audio/drums.js` | three kits and their patterns |
+| `js/audio/drums.js` | three kits (`lofi`, `brush`, `electro`) and their patterns |
 | `js/audio/ambience.js` | twelve environment textures |
-| `js/audio/engine.js` | performance logic and the transport / scheduler |
-| `js/audio/recorder.js` | live recording and chunked WAV export |
+| `js/audio/engine.js` | `Engine` (performs a plan) and `Transport` (scheduler/clock) |
+| `js/audio/recorder.js` | live recording, chunked WAV export |
 | `js/storage.js` | library, autosave, preferences, share codes |
-| `js/visual.js` | canvas visualiser |
-| `js/card.js` | share card image |
-| `js/app.js` | UI |
-| `sw.js` | offline app shell |
+| `js/install.js` | the header's Install button behind `beforeinstallprompt` |
+| `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
+| `sw.js`, `manifest.webmanifest` | offline app shell and the install manifest |
+| `scripts/serve.js`, `scripts/hosts.js` | the dependency-free dev server, and the `Host` names it answers to |
+| `test/` | the node:test suites and the Chromium smoke tests |
 
 ## License
 

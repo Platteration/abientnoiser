@@ -6,12 +6,18 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "test": "node --test test/*.test.js",
-    "test:browser": "node test/browser.smoke.mjs",
+    "test:e2e": "node test/browser.smoke.mjs",
+    "test:browser": "npm run test:e2e",
     "test:musical": "node test/musical.smoke.mjs",
-    "test:all": "npm test && npm run test:musical && npm run test:textures && npm run test:browser",
-    "test:textures": "node test/texture.smoke.mjs"
+    "test:textures": "node test/texture.smoke.mjs",
+    "test:conventions": "node --test test/conventions.mjs",
+    "check": "npm test && npm run test:conventions",
+    "test:all": "npm test && npm run test:musical && npm run test:textures && npm run test:conventions && npm run test:e2e"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "playwright": "^1.56.1"
   }
