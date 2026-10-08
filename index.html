@@ -1,19 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="no-js">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Everything is same-origin: no inline scripts, no CDNs, no analytics. The
-       exceptions are the data: favicon, the blob: worker in js/timer.js and the
-       blob: URLs the exports download through. frame-ancestors cannot be set from
-       a meta tag, so it is not here. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <!-- The site's policy, the same text as the Content-Security-Policy header in _headers,
+       .htaccess and deploy/nginx.conf (test/website.test.js holds them equal), for a host
+       that sends no headers, such as GitHub Pages. A meta tag cannot carry frame-ancestors,
+       and upgrade-insecure-requests is left to the header so that `npm start` still serves a
+       phone over plain http on the local network. Why each source is there: README.md,
+       "Response headers". -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'sha256-R/YcaBd5BMoXLCypGal5N2/WGoOqL8043Ls13x3RVKQ='; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw">
+  <meta name="referrer" content="no-referrer">
   <title>Ambient Noiser — generative looping soundscapes</title>
   <meta name="description" content="Hour-long looping ambient and lo-fi soundscapes with mood changes every few minutes, generated live in your browser. Save your favourites.">
   <meta name="theme-color" content="#0e1116">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2313202e'/%3E%3Cpath d='M6 18c3-6 5-6 8 0s5 6 8 0 3-6 4-4' fill='none' stroke='%237cc4ff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.svg">
+  <script src="js/guard.js"></script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -31,6 +35,8 @@
       <button id="install" type="button" class="ghost sm" hidden title="Add Ambient Noiser to your home screen or desktop">Install</button>
     </div>
   </header>
+
+  <div id="startNote" class="start-note" role="alert">Ambient Noiser has not started. It composes and plays its music with JavaScript, in this browser, and nothing is uploaded. If JavaScript is off, turn it on for this site; otherwise check your connection and reload the page.</div>
 
   <main class="layout">
     <section class="card player" aria-label="Player">

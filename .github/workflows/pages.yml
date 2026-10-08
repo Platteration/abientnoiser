@@ -38,9 +38,12 @@ jobs:
       # the commit carries against the shell's contents before the stamp below.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:all
-      # Publish the tracked tree, not the working directory: after `npm ci` the
-      # working directory carries node_modules and whatever else a step left behind.
-      - run: mkdir dist && git archive HEAD | tar -x -C dist
+      # Publish the site's own files out of the commit, and nothing else: not the notes,
+      # the tests, the dev server or the hosting configs, which GitHub Pages would serve as
+      # files (scripts/site.js says what the site is; test/website.test.js holds it to the
+      # service worker's shell). From the commit, not the working directory, which after
+      # `npm ci` carries node_modules and whatever else a step left behind.
+      - run: mkdir dist && git archive HEAD -- $(node scripts/site.js --list) | tar -x -C dist
       # The worker is cache-first, so a deploy only reaches existing visitors if the
       # cache name changes. Stamp the copy that is uploaded with the commit rather
       # than trusting a hand edit.

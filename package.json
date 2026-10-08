@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "test": "node --test test/*.test.js",
-    "test:e2e": "node test/browser.smoke.mjs",
+    "test:e2e": "node test/browser.smoke.mjs && node test/site.smoke.mjs",
     "test:browser": "npm run test:e2e",
     "test:musical": "node test/musical.smoke.mjs",
     "test:textures": "node test/texture.smoke.mjs",

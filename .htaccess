@@ -1,0 +1,48 @@
+# Ambient Noiser: Apache 2.4 settings (mod_rewrite, mod_headers, mod_mime). Netlify and
+# Cloudflare Pages read _headers instead; nginx: deploy/nginx.conf. The headers are the same
+# in all three and in the pages' <meta>, and test/website.test.js holds them equal. Publish
+# the folder `node scripts/site.js <folder> --host=apache` writes, not a checkout.
+
+Options -Indexes
+ServerSignature Off
+AddDefaultCharset utf-8
+DirectoryIndex index.html
+# A missing page, a folder and a refused file all show the site's own not-found page. The
+# path is from the document root: for a site in a sub-folder, put the folder in front of it.
+ErrorDocument 404 /404.html
+ErrorDocument 403 /404.html
+
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+  AddType image/svg+xml .svg
+  AddType text/javascript .js
+  # the licence has no extension; serve it as text rather than a download
+  <Files "LICENSE">
+    ForceType text/plain
+  </Files>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # everything over https
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+  # The site's own files and nothing else. The repository's notes, tests, scripts and
+  # configs, .git and node_modules all answer 404, so a server pointed at a checkout by
+  # mistake still publishes only the site; a folder answers 404 rather than a listing.
+  RewriteRule !^(index\.html|404\.html|sw\.js|manifest\.webmanifest|(icon|favicon)\.svg|robots\.txt|LICENSE|\.well-known/security\.txt|css/[a-z]+\.css|js/(audio/)?[a-z]+\.js)?$ - [R=404,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'sha256-R/YcaBd5BMoXLCypGal5N2/WGoOqL8043Ls13x3RVKQ='; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw; frame-ancestors 'none'; upgrade-insecure-requests"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set Permissions-Policy "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), identity-credentials-get=(), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(), midi=(), otp-credentials=(), payment=(), picture-in-picture=(), publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), storage-access=(), usb=(), window-management=(), xr-spatial-tracking=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set Cross-Origin-Resource-Policy "same-origin"
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+  # no file name carries a version: revalidate every load (an unchanged file is a 304)
+  Header always set Cache-Control "no-cache"
+</IfModule>

@@ -277,3 +277,10 @@ body.quiet .visual { position: fixed; inset: 0; width: 100vw; height: 100vh; z-i
 /* environment presets */
 .presets { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.7rem; }
 .presets button { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
+
+/* the safety net (js/guard.js): with no script running, or a page that could not start,
+   a note stands where the controls were rather than controls that would do nothing */
+.start-note { display: none; max-width: calc(1180px - 2.5rem); width: calc(100% - 2.5rem); margin: 1rem auto 0; padding: 0.9rem 1.1rem; background: var(--card); border: 1px solid var(--danger); border-radius: var(--radius); }
+.no-js .start-note, .start-failed .start-note { display: block; }
+.no-js .toolbar, .no-js main, .no-js footer,
+.start-failed .toolbar, .start-failed main, .start-failed footer { display: none; }

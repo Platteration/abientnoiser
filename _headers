@@ -1,0 +1,22 @@
+# Response headers for Netlify and Cloudflare Pages, which read this file from the folder they
+# publish (`node scripts/site.js <folder> --host=netlify`, or `--host=cloudflare`). The same
+# values are in .htaccess (Apache) and deploy/nginx.conf (nginx), and the policy is in the
+# <meta> of index.html and 404.html for a host that sends no headers (GitHub Pages);
+# test/website.test.js holds every copy equal. Why each value is there: README.md,
+# "Response headers". No file name carries a version, so everything is revalidated on every
+# load (an unchanged file costs a 304), and a deploy never mixes old scripts with new HTML.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'sha256-R/YcaBd5BMoXLCypGal5N2/WGoOqL8043Ls13x3RVKQ='; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw; frame-ancestors 'none'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: accelerometer=(), autoplay=(self), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), identity-credentials-get=(), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(), midi=(), otp-credentials=(), payment=(), picture-in-picture=(), publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), storage-access=(), usb=(), window-management=(), xr-spatial-tracking=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cache-Control: no-cache
+
+# The licence has no extension; serve it as text rather than a download.
+/LICENSE
+  Content-Type: text/plain; charset=utf-8

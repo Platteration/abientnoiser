@@ -14,6 +14,8 @@ All of the following are fixed on `claude/repo-review-security-baiyud`, each wit
 
 `BUG-1`, `SEC-1`, `CI-1`, `SEC-3`, `MISS-2`, `SEC-2`, `BUG-2`, `BUG-3`, `BUG-4`, `MISS-1`, `MISS-3`
 
+**Website pass (2026-10-08)** — the app is also a website, on the model the account's art app set: `MISS-4` (the Pages deploy now publishes `scripts/site.js --list`, the service worker's shell and the few files every site has, out of the commit, and nothing else), and the rest of `SEC-3`'s recommendation (the policy measured as a response header with `default-src 'none'`, no `'unsafe-inline'` anywhere — the inline swatch style is set through the style object, the favicon is a file rather than a `data:` URL — and Trusted Types enforced, with every `innerHTML` template replaced by elements built from text), plus the hosting settings for Netlify, Cloudflare Pages, Apache and nginx with one set of headers, a not-found page, `robots.txt`, `security.txt` and a safety net for a page that cannot start. README.md, "Deploy", says which protections need a host that sends headers.
+
 An independent reviewer then read each commit and tried to find what was wrong with it, and a second reviewer tried to refute every objection raised. What survived that was fixed in a follow-up commit.
 
 Repository hardening applied here as well: every GitHub Action is pinned to a commit rather than a floating tag, each workflow declares a least-privilege `permissions` block, and a Dependabot config, a licence and a security policy are in place.

@@ -25,6 +25,14 @@ are keyed by origin, and a GitHub Pages project site shares one origin with
 every other app the account publishes, so a stored record or a cached response
 is not necessarily one this app wrote.
 
+The app is also a website (README.md, "Deploy"), and there the hosting is in scope as
+well: a way to run script or load a resource the Content-Security-Policy or its Trusted
+Types rules should forbid; a page of this site that another site can frame; a file published
+that is not part of the site (`scripts/site.js` lists the site); and settings in `_headers`,
+`_redirects`, `.htaccess` or `deploy/nginx.conf` that are wrong, incomplete or not the same as
+the others. A deployed site's `/.well-known/security.txt` points to this page; its `Expires`
+date is renewed every year.
+
 Out of scope: vulnerabilities in third-party dependencies that are already
 public and have an upstream fix, findings that require an attacker to already
 control the device or account (which, per the paragraph above, writing this

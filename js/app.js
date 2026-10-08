@@ -2,6 +2,16 @@
 (function () {
   const AN = window.AN;
   const $ = (id) => document.getElementById(id);
+  /** An element built from parts. Text goes in as text and is never parsed as markup, so
+   *  nothing a share link or a stored record carries can become an element: the page's
+   *  Trusted Types policy makes an HTML string sink (innerHTML and the rest) a TypeError,
+   *  and this is how everything on the page is drawn instead. */
+  const h = (tag, attrs, ...children) => {
+    const el = document.createElement(tag);
+    for (const [name, value] of Object.entries(attrs || {})) el.setAttribute(name, value);
+    el.append(...children);
+    return el;
+  };
   const ACCENTS = {
     ambient: '#7cc4ff', lofi: '#f0a35e', focus: '#7ee0b8', space: '#b48cff',
     night: '#6aa0ff', nocturne: '#a8b4ff', synthwave: '#ff8ad1', jazz: '#e8c46a',
@@ -90,6 +100,8 @@
     if (state.fromShare) toast('Playing a shared mix — save it to keep it');
     requestAnimationFrame(tickUI);
     state.logic = AN.ticker(500, tickLogic);
+    // the safety net (js/guard.js) stands down: from here the app reports its own failures
+    document.documentElement.classList.add('started');
   }
 
   /** Export lengths, capped at the loop length, plus the whole loop. */
@@ -103,7 +115,7 @@
   }
 
   function buildSelect(sel, values, label, current) {
-    sel.innerHTML = '';
+    sel.replaceChildren();
     for (const v of values) {
       const o = document.createElement('option');
       o.value = v; o.textContent = label(v);
@@ -114,7 +126,7 @@
 
   function buildStyles() {
     const wrap = $('styles');
-    wrap.innerHTML = '';
+    wrap.replaceChildren();
     for (const id of Object.keys(AN.STYLES)) {
       const st = AN.STYLES[id];
       const b = document.createElement('button');
@@ -122,7 +134,7 @@
       b.className = 'style' + (id === state.settings.style ? ' active' : '');
       b.dataset.style = id;
       b.style.setProperty('--accent', ACCENTS[id]);
-      b.innerHTML = `<span class="icon">${st.icon}</span><span class="name">${st.name}</span><span class="desc">${st.desc}</span>`;
+      b.append(h('span', { class: 'icon' }, st.icon), h('span', { class: 'name' }, st.name), h('span', { class: 'desc' }, st.desc));
       b.addEventListener('click', () => setStyle(id));
       wrap.appendChild(b);
     }
@@ -131,7 +143,7 @@
   /** One-click environment combinations. Every texture not named is turned off. */
   function buildPresets() {
     const wrap = $('presets');
-    wrap.innerHTML = '';
+    wrap.replaceChildren();
     for (const [name, levels] of PRESETS) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -151,13 +163,13 @@
   }
 
   function buildMixer(wrap, layers) {
-    wrap.innerHTML = '';
+    wrap.replaceChildren();
     for (const l of layers) {
       const row = document.createElement('label');
       row.className = 'fader';
       const v = Math.round((state.settings.levels[l.id] || 0) * 100);
-      row.innerHTML = `<span class="fname">${l.name}</span><input type="range" min="0" max="100" value="${v}" data-layer="${l.id}"><span class="fval">${v}</span>`;
-      const input = row.querySelector('input');
+      const input = h('input', { type: 'range', min: '0', max: '100', value: String(v), 'data-layer': l.id });
+      row.append(h('span', { class: 'fname' }, l.name), input, h('span', { class: 'fval' }, String(v)));
       input.addEventListener('input', () => {
         const lv = Number(input.value) / 100;
         row.querySelector('.fval').textContent = input.value;
@@ -254,6 +266,25 @@
   }
 
   // ---------- offline ----------
+  /** The service worker's address. Under the page's Trusted Types policy register() takes
+   *  a TrustedScriptURL, not a string; this policy is private to this function and vouches
+   *  for the one worker the app ships. Without Trusted Types, or under a host policy that
+   *  does not name it, the string is used as it is. */
+  function workerURL() {
+    const SW = 'sw.js';
+    try {
+      if (window.trustedTypes && trustedTypes.createPolicy) {
+        return trustedTypes.createPolicy('ambient-noiser-sw', {
+          createScriptURL(url) {
+            if (url === SW) return url;
+            throw new TypeError(`not the app's service worker: ${url}`);
+          },
+        }).createScriptURL(SW);
+      }
+    } catch { /* no policy: the string is used as it is */ }
+    return SW;
+  }
+
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
     // A page already under a worker keeps running the build it loaded, so say when a
@@ -266,7 +297,7 @@
       toast('New version — reload to use it');
     };
     navigator.serviceWorker.addEventListener('controllerchange', announce);
-    navigator.serviceWorker.register('sw.js').then((reg) => {
+    navigator.serviceWorker.register(workerURL()).then((reg) => {
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
@@ -505,7 +536,7 @@
 
   function renderQueue() {
     const list = $('queueList');
-    list.innerHTML = '';
+    list.replaceChildren();
     $('queueEmpty').hidden = state.queue.length > 0;
     $('queueNow').disabled = state.queue.length === 0;
     // one library read for the whole list: get() re-reads and re-validates it per call
@@ -516,16 +547,15 @@
       const st = AN.STYLES[mix.settings.style] || AN.STYLES.ambient;
       const li = document.createElement('li');
       if (i === state.queueIndex % Math.max(1, state.queue.length)) li.className = 'next';
-      li.innerHTML = `<span class="qname">${st.icon} ${escapeHtml(mix.name)}</span>
-        <span class="qmeta">${st.name}</span>
-        <button type="button" class="ghost sm up" title="Move up">↑</button>
-        <button type="button" class="ghost sm out" title="Remove from queue">✕</button>`;
-      li.querySelector('.up').addEventListener('click', () => {
+      const up = h('button', { type: 'button', class: 'ghost sm up', title: 'Move up' }, '↑');
+      const out = h('button', { type: 'button', class: 'ghost sm out', title: 'Remove from queue' }, '✕');
+      li.append(h('span', { class: 'qname' }, `${st.icon} ${mix.name}`), h('span', { class: 'qmeta' }, st.name), up, out);
+      up.addEventListener('click', () => {
         if (i === 0) return;
         [state.queue[i - 1], state.queue[i]] = [state.queue[i], state.queue[i - 1]];
         saveQueue(); renderQueue();
       });
-      li.querySelector('.out').addEventListener('click', () => {
+      out.addEventListener('click', () => {
         state.queue.splice(i, 1);
         if (state.queueIndex > state.queue.length) state.queueIndex = 0;
         saveQueue(); renderQueue();
@@ -622,7 +652,7 @@
   function renderPlan() {
     const plan = state.plan;
     const seg = $('segments');
-    seg.innerHTML = '';
+    seg.replaceChildren();
     for (const s of plan.sections) {
       const d = document.createElement('div');
       d.className = 'seg';
@@ -636,18 +666,23 @@
     $('planSummary').textContent = `${plan.sections.length} movements · ${plan.styleName} · key of ${AN.theory.keyName(plan.keyRoot)} · ~${plan.tempo} bpm${plan.daypartName ? ` · ${plan.daypartName.toLowerCase()}` : ''}${plan.editCount ? ` · ${plan.editCount} edited` : ''}`;
     $('resetEdits').hidden = !plan.editCount;
     const list = $('sectionList');
-    list.innerHTML = '';
+    list.replaceChildren();
     for (const s of plan.sections) {
       const li = document.createElement('li');
       li.dataset.index = s.index;
       li.className = s.edited ? 'edited' : '';
-      li.innerHTML = `<button type="button" class="jump" title="Jump here">${AN.formatTime(s.start)}</button>
-        <span class="swatch" style="background:hsl(${s.hue} 45% ${28 + s.intensity * 30}%)"></span>
-        <span class="sname">${escapeHtml(s.name)}${s.edited ? ' <span class="pill">edited</span>' : ''}</span>
-        <button type="button" class="edit" title="Change this movement">✎</button>
-        <span class="sinfo">${escapeHtml(s.keyName)} ${escapeHtml(s.mode)} · ${escapeHtml(s.chordNames.join(' – '))} · ${s.tempo} bpm · ${AN.formatTime(s.length)}</span>`;
-      li.querySelector('.jump').addEventListener('click', () => seekTo(s.start));
-      li.querySelector('.edit').addEventListener('click', () => openEditor(s.index));
+      const jump = h('button', { type: 'button', class: 'jump', title: 'Jump here' }, AN.formatTime(s.start));
+      // a colour set through the style object, not a style="" attribute, which the page's
+      // policy refuses (style-src has no 'unsafe-inline')
+      const swatch = h('span', { class: 'swatch' });
+      swatch.style.background = `hsl(${s.hue} 45% ${28 + s.intensity * 30}%)`;
+      const name = h('span', { class: 'sname' }, s.name);
+      if (s.edited) name.append(' ', h('span', { class: 'pill' }, 'edited'));
+      const edit = h('button', { type: 'button', class: 'edit', title: 'Change this movement' }, '✎');
+      li.append(jump, swatch, name, edit,
+        h('span', { class: 'sinfo' }, `${s.keyName} ${s.mode} · ${s.chordNames.join(' – ')} · ${s.tempo} bpm · ${AN.formatTime(s.length)}`));
+      jump.addEventListener('click', () => seekTo(s.start));
+      edit.addEventListener('click', () => openEditor(s.index));
       list.appendChild(li);
       if (state.editing === s.index) li.appendChild(buildEditor(s));
     }
@@ -756,7 +791,7 @@
     const e = (state.settings.edits && state.settings.edits[section.index]) || {};
     const field = (label, options, current, onChange) => {
       const l = document.createElement('label');
-      l.innerHTML = `<span>${label}</span>`;
+      l.append(h('span', null, label));
       const sel = document.createElement('select');
       for (const [value, text] of options) {
         const o = document.createElement('option');
@@ -812,8 +847,8 @@
       renderQueue();
     } catch {
       state.queue = [];
-      $('mixList').innerHTML = '';
-      $('queueList').innerHTML = '';
+      $('mixList').replaceChildren();
+      $('queueList').replaceChildren();
       $('libraryEmpty').hidden = true;
       $('libraryBroken').hidden = false;
       $('queueEmpty').hidden = false;
@@ -824,7 +859,7 @@
   function renderLibrary() {
     const list = $('mixList');
     const mixes = AN.storage.list();
-    list.innerHTML = '';
+    list.replaceChildren();
     $('libraryBroken').hidden = true;
     $('libraryEmpty').hidden = mixes.length > 0;
     // The ceiling is visible from the first save, not only once it bites: Save refuses
@@ -840,18 +875,17 @@
       const st = AN.STYLES[m.settings.style] || AN.STYLES.ambient;
       const env = AN.AMBIENCE_LAYERS.filter((l) => m.settings.levels[l.id] > 0).map((l) => l.name.toLowerCase()).join(', ');
       const li = document.createElement('li');
-      li.innerHTML = `<div class="mix-main">
-          <button type="button" class="load" title="Load this mix"><span class="icon">${st.icon}</span><span><strong>${escapeHtml(m.name)}</strong><small>${st.name} · ${m.settings.durationMin} min · seed ${escapeHtml(m.settings.seed)}${env ? ' · ' + env : ''}</small></span></button>
-        </div>
-        <div class="mix-actions">
-          <button type="button" class="ghost sm enqueue" title="Add to the queue">＋</button>
-          <button type="button" class="ghost sm share" title="Copy share link">Link</button>
-          <button type="button" class="ghost sm del" title="Delete">✕</button>
-        </div>`;
-      li.querySelector('.load').addEventListener('click', () => { applySettings(m.settings); toast(`Loaded “${m.name}”`); });
-      li.querySelector('.enqueue').addEventListener('click', () => enqueue(m.id));
-      li.querySelector('.share').addEventListener('click', () => copyShare(m.settings));
-      li.querySelector('.del').addEventListener('click', () => {
+      const load = h('button', { type: 'button', class: 'load', title: 'Load this mix' },
+        h('span', { class: 'icon' }, st.icon),
+        h('span', null, h('strong', null, m.name), h('small', null, `${st.name} · ${m.settings.durationMin} min · seed ${m.settings.seed}${env ? ' · ' + env : ''}`)));
+      const enq = h('button', { type: 'button', class: 'ghost sm enqueue', title: 'Add to the queue' }, '＋');
+      const share = h('button', { type: 'button', class: 'ghost sm share', title: 'Copy share link' }, 'Link');
+      const del = h('button', { type: 'button', class: 'ghost sm del', title: 'Delete' }, '✕');
+      li.append(h('div', { class: 'mix-main' }, load), h('div', { class: 'mix-actions' }, enq, share, del));
+      load.addEventListener('click', () => { applySettings(m.settings); toast(`Loaded “${m.name}”`); });
+      enq.addEventListener('click', () => enqueue(m.id));
+      share.addEventListener('click', () => copyShare(m.settings));
+      del.addEventListener('click', () => {
         if (!confirm(`Delete “${m.name}”?`)) return;
         if (!AN.storage.remove(m.id)) storageRefused();
         state.queue = state.queue.filter((q) => q !== m.id);
@@ -872,8 +906,6 @@
       ? `${full} left out — the library is full (${n} of ${AN.storage.MAX_MIXES}); Clear all mixes to start over`
       : `${full} left out — no room for them (${n} mixes stored)`;
   }
-
-  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
   function defaultMixName() {
     const s = state.plan.sections[0];

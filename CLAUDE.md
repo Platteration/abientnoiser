@@ -4,12 +4,16 @@ Read AGENTS.md first. It holds the working rules every coding agent follows in t
 
 A static, dependency-free web app that generates hour-long looping soundscapes with
 the Web Audio API. No build step, no server, no samples. `npm start` serves it;
-`index.html` loads the scripts in dependency order.
+`index.html` loads the scripts in dependency order. It is also a website: the host serves
+the files `scripts/site.js` lists, with the headers in `_headers`, `.htaccess` and
+`deploy/nginx.conf`, and does nothing else — everything the app does still happens in the
+visitor's browser.
 
 ## Layout
 
 | File | Role |
 | --- | --- |
+| `js/guard.js` | the safety net, loaded first: a note in place of the controls when the page cannot start |
 | `js/prng.js` | seeded random numbers (`AN.rng`) |
 | `js/timer.js` | `AN.ticker` — a worker interval that survives a background tab |
 | `js/theory.js` | modes, diatonic chords, voicings |
@@ -24,6 +28,9 @@ the Web Audio API. No build step, no server, no samples. `npm start` serves it;
 | `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
 | `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`) |
+| `scripts/site.js` | the website: `SHELL` plus `EXTRA`, written into a folder, or listed for the Pages deploy |
+| `404.html`, `robots.txt`, `.well-known/security.txt` | the rest of the website |
+| `_headers`, `_redirects`, `.htaccess`, `deploy/nginx.conf` | Netlify/Cloudflare, Netlify, Apache and nginx settings: one set of headers |
 
 ## Invariants worth knowing
 
@@ -62,11 +69,13 @@ only thing that should write `user`.
 duck them; drums use the short room impulse, everything else the hall.
 
 **Anything from outside is untrusted.** Share links carry base64 JSON. Everything goes
-through `AN.storage.cleanSettings` before use, and anything rendered into HTML goes
-through `escapeHtml`. Whitelists are own-property lookups (`has(TABLE, id)`), never a
-bare `TABLE[id]`: every name on `Object.prototype` — `constructor`, `__proto__`,
-`toString` — is truthy on a plain table and used to pass as a valid style, mood or
-mode. A share link is not written to the autosave until the visitor changes something,
+through `AN.storage.cleanSettings` before use, and nothing is rendered as HTML: `app.js`
+builds every element with `h()` (createElement, setAttribute, text as text), and the page's
+Trusted Types policy makes `innerHTML` and every other HTML string sink a TypeError, so a
+string slipped in later fails loudly rather than parsing. Whitelists are own-property
+lookups (`has(TABLE, id)`), never a bare `TABLE[id]`: every name on `Object.prototype` —
+`constructor`, `__proto__`, `toString` — is truthy on a plain table and used to pass as a
+valid style, mood or mode. A share link is not written to the autosave until the visitor changes something,
 so opening one cannot quietly replace the mix they were building.
 
 **Selects hold strings.** `buildSelect` compares with `String(v) === String(current)`.
@@ -116,6 +125,32 @@ cannot render and cleans the rest, and `str`/`num`/`has` refuse to coerce an obj
 `renderLibrary()` running first, one unreadable record left every control on the page
 unwired, on every load, with no way back from inside the app.
 
+**The policy is written in five places and measured, not guessed.** `_headers`, `.htaccess`,
+`deploy/nginx.conf`, and the `<meta>` of `index.html` and `404.html` (which leaves out
+`frame-ancestors`, which a meta cannot carry, and `upgrade-insecure-requests`, which would break
+`HOST=0.0.0.0 npm start` for a phone on plain http). `test/website.test.js` holds them equal:
+change one, change all five. Every source is there because Chromium needed it with the policy
+sent as a header: `connect-src 'self'` is the service worker (with `'none'` it installs and
+caches nothing, with no error on the page); `worker-src blob:` is `AN.ticker` (without it the
+`try` in `timer.js` falls back to `setInterval`, silently, and the timers stall in a background
+tab — `test/site.smoke.mjs` checks the worker exists); the `trusted-types` names are the two
+`createPolicy` calls, one in `timer.js` and one in `app.js`'s `workerURL()`, because under
+Trusted Types `new Worker()` and `serviceWorker.register()` take a TrustedScriptURL, not a
+string; the `style-src` hash is `404.html`'s inline style, so editing that style means pasting
+the new hash the test prints into all five places (and the shell's `VERSION`, since
+`index.html` carries it). Styles go through the style object (`el.style.x = …`), never a
+`style=""` attribute, which the policy refuses.
+
+**The website is `scripts/site.js`'s list and nothing else.** `SHELL` from `sw.js` plus
+`EXTRA` (the worker, `404.html`, `robots.txt`, `security.txt`, `LICENSE`); the Pages deploy
+`git archive`s exactly that list out of the commit, and `test/website.test.js` reads the nginx,
+Apache and Netlify rules the way each host does and checks every other repository file answers
+404 (nginx and Apache allow a pattern of the site's paths; `_redirects` lists the repository's
+own top-level entries, so a new one goes there too). `js/guard.js` loads before everything and
+depends on nothing: with `no-js` still on `<html>`, a failed script or stylesheet, or a throw
+from one of the site's own scripts before `init()` adds `started` to `<html>`, it shows
+`#startNote` and the CSS hides the controls. After `started` the app reports its own failures.
+
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
 may use frames; the sleep timer, focus timer and queue may not.
@@ -144,10 +179,10 @@ no text carries an `aria-label`.
 ## Tests
 
 ```bash
-npm test               # node --test: PRNG, theory, composer, styles, app shell, dev server
+npm test               # node --test: PRNG, theory, composer, styles, app shell, website, dev server
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
-npm run test:e2e       # Playwright + Chromium, end to end
+npm run test:e2e       # Playwright + Chromium, end to end: the app, then the built website
 npm run test:conventions  # the repository's shape against CONVENTIONS.md
 npm run check          # npm test + test:conventions: the gate before a push
 npm run test:all
@@ -168,6 +203,13 @@ the dev server killed, which is the only way to tell a worker that reads its own
 from one that reads the origin's — a regex over `sw.js` cannot. `test/shell.test.js`
 loads `sw.js` with its globals stubbed and drives the real fetch handler for the cases
 a browser will not stage on demand, such as a cache that refuses to open.
+
+`test/site.smoke.mjs` builds the site and serves it at `/abientnoiser/`, as Pages serves a
+project site, sending each response the headers `_headers` gives it and answering a missing
+address with `404.html`; it drives the main flow and fails on any violation (collected from every
+document through an exposed binding, since a navigation drops a page's own record), page error,
+console error or request outside the site. Its Trusted Types probes are violations by design, so
+they run in pages of their own whose reports are not counted.
 
 `test:textures` is the only check on how things actually sound. Nobody has heard this
 app; spectral balance is the closest available proxy. It puts the piece into a bright

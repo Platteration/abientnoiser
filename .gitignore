@@ -2,6 +2,10 @@ node_modules/
 .DS_Store
 *.log
 
+# project
+# the folder scripts/site.js writes for a deploy
+/dist/
+
 # editors
 .vscode/
 .idea/

@@ -85,17 +85,107 @@ Opening `index.html` from disk also works, except for the offline service worker
 
 ### Deploy
 
-A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages → Source: GitHub Actions** and every push to `main` publishes the app.
+The app is also a website, and the website is the files the page loads and nothing else: the
+page and its not-found page, the stylesheet, the scripts, the service worker, the manifest and
+icons, `robots.txt`, `.well-known/security.txt` and the licence. `node scripts/site.js <folder>`
+writes them into an empty folder and `node scripts/site.js --list` names them; the list is the
+service worker's shell plus those few files, so nothing else in the repository — notes, tests,
+the dev server, the hosting configs — is ever published. Everything still happens in the
+visitor's browser: the host only serves files, and nothing the app makes is sent anywhere.
+
+A GitHub Pages workflow is included (`.github/workflows/pages.yml`). Enable **Settings → Pages →
+Source: GitHub Actions** and every push to `main` publishes exactly that list, taken out of the
+commit.
+
+Any static host will serve the folder. The repository carries the settings of the common ones,
+with the same headers in each:
+
+| Host | Build the folder with | Settings it reads |
+| --- | --- | --- |
+| Netlify | `node scripts/site.js <folder> --host=netlify` | `_headers`, `_redirects` |
+| Cloudflare Pages | `node scripts/site.js <folder> --host=cloudflare` | `_headers` |
+| Apache | `node scripts/site.js <folder> --host=apache` | `.htaccess` |
+| nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand |
+| GitHub Pages | the workflow | none: see below |
+
+Serve it over HTTPS only: the Apache and nginx settings redirect plain `http://`, and Netlify,
+Cloudflare Pages and GitHub Pages each have a switch for it. Never point a web server at a git
+checkout, whose `.git/` holds the whole history. If it happens anyway, the Apache and nginx
+settings serve the site's own files and answer 404 for everything else, and `_redirects` does
+the same for the repository's files on Netlify; Cloudflare Pages has no 404 rule, so there the
+folder is the only protection.
+
+**Response headers.** The same set is in `_headers`, `.htaccess` and `deploy/nginx.conf`, and
+`test/website.test.js` fails when one of them says something the others do not:
+
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Security-Policy` | `default-src 'none'; script-src 'self'; style-src 'self' 'sha256-…'; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw; frame-ancestors 'none'; upgrade-insecure-requests` | Only the site's own scripts run, and nothing inline or evaluated. Each source was measured in Chromium with the policy sent as a header: the hash is the not-found page's inline style; `blob:` workers are the background timer (`js/timer.js`), without which the sleep timer, focus timer and queue would fall back to a timer the browser throttles in a background tab; `connect-src 'self'` is the service worker fetching the site's own files, the only network code there is. Trusted Types make an HTML string sink a TypeError, so text from a share link or a stored mix can only ever be text; the two named policies vouch for the timer's `blob:` URL and for `sw.js`, nothing else. |
+| `X-Content-Type-Options` | `nosniff` | A file is what its type says. |
+| `X-Frame-Options` | `DENY` | With `frame-ancestors 'none'`: no other site can frame the app and steer its buttons (clickjacking). |
+| `Referrer-Policy` | `no-referrer` | A share link carries a whole mix in its address; no other site is told it. |
+| `Permissions-Policy` | every powerful feature off — camera, microphone, location, sensors, USB, payment and the rest — but `autoplay` and `clipboard-write` for this site | The app plays sound and copies a link, nothing more. |
+| `Cross-Origin-Opener-Policy` | `same-origin` | Another window keeps no handle on this one. |
+| `Cross-Origin-Resource-Policy` | `same-origin` | Other sites cannot embed the app's files. |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Browsers remember to use HTTPS. |
+| `Cache-Control` | `no-cache` | No file name carries a version, so every load revalidates (an unchanged file costs a 304) and a deploy never mixes old scripts with new HTML. The service worker keeps the offline copy. |
+
+**GitHub Pages sends no headers.** The page carries the same policy in a `<meta>` tag, and the
+referrer policy in another, so the scripts, styles, workers and Trusted Types rules hold there
+too. A `<meta>` cannot carry `frame-ancestors`, so on Pages another site can frame the app; and
+nosniff, the permissions, the cross-origin and HTTPS headers need a host that sends headers
+(Netlify, Cloudflare Pages, Apache, nginx). `upgrade-insecure-requests` is left out of the
+`<meta>` on purpose, so that `HOST=0.0.0.0 npm start` still serves a phone over plain `http://`
+on the local network; Pages forces HTTPS by itself.
+
+**One origin per app.** A Pages project site lives under `platteration.github.io`, an origin it
+shares with every other app the account publishes, and storage, caches and service workers
+belong to the origin: a script injected into any one of those apps can read and rewrite this
+one's saved mixes. The app already treats what it reads back as untrusted and keeps its keys and
+caches prefixed, but that limits the damage rather than preventing it. Give it an origin of its
+own: a custom domain or subdomain (Settings → Pages → Custom domain), or any host above on a
+domain of its own. `robots.txt` and `.well-known/security.txt` are only read at a domain's root,
+so they do their job there and nothing under a Pages project path.
+
+**Not-found page.** Every host above answers an address the site does not have with `404.html`,
+which carries its own look (an inline style the policy allows by its hash) and loads nothing by a
+relative path but the icon, so it renders at any address. Its one link, back to the app, is
+`./`: right for any address one level below the site's root, which is what a mistyped page
+name is. The Apache setting names it from the document root (`ErrorDocument 404 /404.html`); for
+a site in a sub-folder, put the folder in front.
+
+**If the page cannot start.** `js/guard.js` loads first and depends on nothing. With JavaScript
+off, with a file that did not load, or with a script that threw before the app started, the
+visitor reads a short note saying so where the controls would have been, rather than a page of
+controls that do nothing.
+
+**Security contact.** `.well-known/security.txt` points to this repository's private
+vulnerability report form and to `SECURITY.md`. Its `Expires` date (8 October 2027) is renewed
+every year; `npm test` fails once it has passed.
+
+**Launch checklist**, with `SITE` the https address:
+
+```sh
+curl -sI http://SITE/ | head -1                        # a 301 to https
+curl -sI https://SITE/ | grep -i -E 'content-security|strict-transport|nosniff|frame-options|referrer|permissions|cross-origin|cache-control'
+curl -sI https://SITE/.git/HEAD | head -1               # 404
+curl -sI https://SITE/README.md | head -1               # 404
+curl -s  https://SITE/js/ | grep -c 'Page not found'    # 1: the not-found page, not a file list
+curl -sI https://SITE/.well-known/security.txt | head -1 # 200
+```
+
+Then open the site, press play, save and share a mix, and check that the browser console shows
+no `Content Security Policy` or `Trusted Type` lines.
 
 ## Development
 
 ```bash
-npm test                  # node --test: PRNG, theory, composer, styles, app shell, dev server
+npm test                  # node --test: PRNG, theory, composer, styles, app shell, website, dev server
 npm run test:conventions  # the repository's shape against CONVENTIONS.md
 npm run check             # the two above: the gate before a push
 npm run test:musical      # every style's whole loop, checked for wrong notes and wrong timing
 npm run test:textures     # each environment texture, checked against the sound it claims to be
-npm run test:e2e          # Playwright + Chromium, end to end
+npm run test:e2e          # Playwright + Chromium, end to end: the app, then the built website
 npm run test:all          # all of the above
 ```
 
@@ -105,12 +195,15 @@ npm run test:all          # all of the above
 
 The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
 
+The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, and that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting. `test/website.test.js` holds the headers equal in every file that writes them, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404.
+
 Both suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile.
 
 ## Project layout
 
 | File | Role |
 | --- | --- |
+| `js/guard.js` | the safety net: a note in place of the controls when the page cannot start |
 | `js/prng.js` | seeded random numbers (`AN.rng`) |
 | `js/timer.js` | `AN.ticker` — a worker interval that survives a background tab |
 | `js/theory.js` | modes, diatonic chords, voicings |
@@ -125,6 +218,9 @@ Both suites run in CI on every push (`.github/workflows/ci.yml`), and a separate
 | `js/install.js` | the header's Install button behind `beforeinstallprompt` |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
 | `sw.js`, `manifest.webmanifest` | offline app shell and the install manifest |
+| `404.html`, `robots.txt`, `.well-known/security.txt`, `favicon.svg` | the rest of the website |
+| `_headers`, `_redirects`, `.htaccess`, `deploy/nginx.conf` | each host's settings, with the same headers |
+| `scripts/site.js` | the website's file list, and the folder a deploy publishes |
 | `scripts/serve.js`, `scripts/hosts.js` | the dependency-free dev server, and the `Host` names it answers to |
 | `test/` | the node:test suites and the Chromium smoke tests |
 
