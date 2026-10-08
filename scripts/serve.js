@@ -17,6 +17,20 @@ const host = process.env.HOST || '127.0.0.1';
 // list), and — bound off loopback — this machine's own names, so a phone can reach it by
 // address, by hostname or by an mDNS name. The rule and its reasons are in hosts.js.
 const hostAllowed = hostGate({ host, allowedHost: process.env.ALLOWED_HOST });
+// The root as the filesystem names it, so that a resolved path is compared with its like.
+const realRoot = fs.realpathSync.native(root);
+
+/** Whether a path the filesystem resolved may be served: inside the checkout, and through
+ *  no dot-named folder. The URL rules below read the address as it is written, split on
+ *  '/', but what opens is the filesystem's call: on Windows '\' separates too, and GIT~1,
+ *  the 8.3 short name of .git, opens .git, so `/%5C.git%5Cconfig` and `/GIT~1/config` both
+ *  passed those rules and served .git/config; anywhere, a link goes where it points. The
+ *  resolved path has none of those spellings left in it. */
+function servable(real) {
+  const rel = path.relative(realRoot, real);
+  return !path.isAbsolute(rel) && !rel.split(path.sep).some((part) => part.startsWith('.'));
+}
+
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -65,17 +79,25 @@ const server = http.createServer((req, res) => {
   }
   fs.stat(file, (err, st) => {
     if (!err && st.isDirectory()) file = path.join(file, 'index.html');
-    fs.readFile(file, (err2, data) => {
+    // .native: on Windows it is the call that answers a short name with the long one
+    fs.realpath.native(file, (err1, real) => {
       if (res.writableEnded || res.destroyed) return;
-      if (err2) {
+      if (err1 || !servable(real)) {
         res.writeHead(404);
         return res.end('Not found');
       }
-      res.writeHead(200, {
-        'Content-Type': types[path.extname(file)] || 'application/octet-stream',
-        'Cache-Control': 'no-cache',
+      fs.readFile(real, (err2, data) => {
+        if (res.writableEnded || res.destroyed) return;
+        if (err2) {
+          res.writeHead(404);
+          return res.end('Not found');
+        }
+        res.writeHead(200, {
+          'Content-Type': types[path.extname(file)] || 'application/octet-stream',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(data);
       });
-      res.end(data);
     });
   });
 });

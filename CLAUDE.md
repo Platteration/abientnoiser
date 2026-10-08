@@ -27,7 +27,7 @@ visitor's browser.
 | `js/storage.js` | library, autosave, preferences, share codes |
 | `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
-| `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`) |
+| `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`); it decides what to serve on the path the filesystem resolves (`servable`), not on the address as written, which on Windows reached `.git` through `\` and `GIT~1` |
 | `scripts/site.js` | the website: `SHELL` plus `EXTRA`, written into a folder, or listed for the Pages deploy |
 | `404.html`, `robots.txt`, `.well-known/security.txt` | the rest of the website |
 | `_headers`, `_redirects`, `.htaccess`, `deploy/nginx.conf` | Netlify/Cloudflare, Netlify, Apache and nginx settings: one set of headers |

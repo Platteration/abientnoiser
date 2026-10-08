@@ -79,7 +79,10 @@ start still works. Reaching it any other way — a port forward, a tunnel, a nam
 router hands out — needs that address in `ALLOWED_HOST` (a comma-separated list, ports
 ignored). Any other `Host` gets a 403, and one line on the terminal the first time that
 name is seen, which is what keeps a page you visit from reaching the checkout by
-pointing its own name at 127.0.0.1.
+pointing its own name at 127.0.0.1. Whatever the address, a file is served only when the
+path the filesystem resolves it to is inside the checkout and passes through no dot-named
+folder, so `.git` stays out however it is spelled: on Windows that includes `\` and short
+names such as `GIT~1`, and anywhere a link that points outside.
 
 Opening `index.html` from disk also works, except for the offline service worker.
 

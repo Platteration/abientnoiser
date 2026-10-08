@@ -18,6 +18,8 @@ All of the following are fixed on `claude/repo-review-security-baiyud`, each wit
 
 An independent reviewer then read each commit and tried to find what was wrong with it, and a second reviewer tried to refute every objection raised. What survived that was fixed in a follow-up commit.
 
+**Exploit hunt (2026-10-08)** — `SEC-2`'s dot-file rule read the address split on `/`, so on Windows, where `\` also separates and `GIT~1` is the short name of `.git`, `GET /%5C.git%5Cconfig` and `GET /GIT~1/config` served `.git/config` (to the whole network under `HOST=0.0.0.0`); reproduced by running `scripts/serve.js` under Node's `path.win32` with an NTFS-like filesystem, not on a Windows host. The server now decides on the path the filesystem resolves, which also refuses a link that leads outside the checkout or into a dot folder.
+
 Repository hardening applied here as well: every GitHub Action is pinned to a commit rather than a floating tag, each workflow declares a least-privilege `permissions` block, and a Dependabot config, a licence and a security policy are in place.
 
 Default branch (2026-09-23): `claude/ambient-music-looper-hvttuo`, not `claude/repo-review-security-baiyud`, the branch this work was done on, so neither Dependabot's security updates nor CI's weekly run reach this work until `main` is created from it and made the default (shared items 4 and 10).
