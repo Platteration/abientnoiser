@@ -36,7 +36,7 @@ test('the dev server survives the requests a browser actually makes', async (t) 
 
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
-  assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);
+  assert.equal((await get('/js/%2e%2e/%2e%2e/package.json')).status, 403);
   assert.equal((await get('/%00')).status, 400, 'rejects an encoded NUL');
   assert.equal((await get('/.git/config')).status, 404, 'does not expose repository metadata');
   assert.equal((await get('/package.json')).status, 404, 'does not expose project files');
