@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const http = require('node:http');
 const path = require('node:path');
 
 const serve = path.resolve(__dirname, '..', 'scripts', 'serve.js');
@@ -11,6 +12,24 @@ function get(pathname) {
     (r) => ({ status: r.status }),
     (e) => ({ error: e.cause ? e.cause.code || String(e.cause) : String(e) })
   );
+}
+
+function getWithHost(pathname, host) {
+  return fetch(`http://localhost:${port}${pathname}`, { headers: { Host: host } }).then(
+    (r) => ({ status: r.status }),
+    (e) => ({ error: e.cause ? e.cause.code || String(e.cause) : String(e) })
+  );
+}
+
+function getRaw(pathname, headers = {}) {
+  return new Promise((resolve) => {
+    const request = http.request({ hostname: 'localhost', port, path: pathname, headers }, (response) => {
+      response.resume();
+      response.on('end', () => resolve({ status: response.statusCode }));
+    });
+    request.on('error', (error) => resolve({ error: error.code || String(error) }));
+    request.end();
+  });
 }
 
 test('the dev server survives the requests a browser actually makes', async (t) => {
@@ -29,7 +48,11 @@ test('the dev server survives the requests a browser actually makes', async (t) 
 
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
-  assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);
+  assert.equal((await getRaw('/js/%2e%2e/%2e%2e/package.json')).status, 403);
+  assert.equal((await get('/%00')).status, 400, 'rejects an encoded NUL');
+  assert.equal((await get('/.git/config')).status, 404, 'does not expose repository metadata');
+  assert.equal((await get('/package.json')).status, 404, 'does not expose project files');
+  assert.equal((await getRaw('/index.html', { Host: `rebind.example:${port}` })).status, 421, 'rejects rebinding Host headers');
   assert.equal((await get('/index.html')).status, 200, 'still alive after traversal attempts');
 
   // aborted requests must not take it down either
