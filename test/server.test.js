@@ -13,6 +13,13 @@ function get(pathname) {
   );
 }
 
+function getWithHost(pathname, host) {
+  return fetch(`http://localhost:${port}${pathname}`, { headers: { Host: host } }).then(
+    (r) => ({ status: r.status }),
+    (e) => ({ error: e.cause ? e.cause.code || String(e.cause) : String(e) })
+  );
+}
+
 test('the dev server survives the requests a browser actually makes', async (t) => {
   const server = spawn(process.execPath, [serve], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
   t.after(() => server.kill());
@@ -30,6 +37,10 @@ test('the dev server survives the requests a browser actually makes', async (t) 
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
   assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);
+  assert.equal((await get('/%00')).status, 400, 'rejects an encoded NUL');
+  assert.equal((await get('/.git/config')).status, 404, 'does not expose repository metadata');
+  assert.equal((await get('/package.json')).status, 404, 'does not expose project files');
+  assert.equal((await getWithHost('/index.html', `rebind.example:${port}`)).status, 421, 'rejects rebinding Host headers');
   assert.equal((await get('/index.html')).status, 200, 'still alive after traversal attempts');
 
   // aborted requests must not take it down either

@@ -9,6 +9,10 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT) || 5173;
+const host = process.env.SERVE_HOST || '127.0.0.1';
+const extraHosts = new Set((process.env.SERVE_ALLOWED_HOSTS || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean));
+const publicFiles = new Set(['index.html', 'icon.svg', 'manifest.webmanifest', 'sw.js']);
+const publicDirectories = new Set(['css', 'js']);
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -27,8 +31,29 @@ const server = http.createServer((req, res) => {
     res.writeHead(400);
     return res.end('Bad request');
   }
-  let file = path.join(root, url === '/' ? 'index.html' : url);
-  if (path.relative(root, file).startsWith('..')) {
+  if (url.includes('\0') || /[\u0001-\u001f\u007f]/.test(url)) {
+    res.writeHead(400);
+    return res.end('Bad request');
+  }
+  const requestHost = String(req.headers.host || '').toLowerCase();
+  const [hostName, hostPort] = requestHost.startsWith('[')
+    ? requestHost.split(']')
+    : requestHost.split(':');
+  const normalizedHost = hostName.replace(/^\[/, '').replace(/\]$/, '');
+  const expectedPort = String(port);
+  const loopback = new Set(['localhost', '127.0.0.1', '::1']);
+  if ((!loopback.has(normalizedHost) && !extraHosts.has(normalizedHost)) || (hostPort && hostPort !== expectedPort)) {
+    res.writeHead(421);
+    return res.end('Misdirected request');
+  }
+  const relative = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
+  const first = relative.split('/')[0];
+  if (!publicFiles.has(relative) && !publicDirectories.has(first)) {
+    res.writeHead(404);
+    return res.end('Not found');
+  }
+  let file = path.join(root, relative);
+  if (path.relative(root, file).startsWith('..') || path.isAbsolute(relative)) {
     res.writeHead(403);
     return res.end();
   }
@@ -58,4 +83,4 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(port, () => console.log(`Ambient Noiser: http://localhost:${port}`));
+server.listen(port, host, () => console.log(`Ambient Noiser: http://${host}:${port}`));
