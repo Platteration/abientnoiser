@@ -21,9 +21,9 @@ function getWithHost(pathname, host) {
   );
 }
 
-function getRaw(pathname) {
+function getRaw(pathname, headers = {}) {
   return new Promise((resolve) => {
-    const request = http.request({ hostname: 'localhost', port, path: pathname }, (response) => {
+    const request = http.request({ hostname: 'localhost', port, path: pathname, headers }, (response) => {
       response.resume();
       response.on('end', () => resolve({ status: response.statusCode }));
     });
@@ -52,7 +52,7 @@ test('the dev server survives the requests a browser actually makes', async (t) 
   assert.equal((await get('/%00')).status, 400, 'rejects an encoded NUL');
   assert.equal((await get('/.git/config')).status, 404, 'does not expose repository metadata');
   assert.equal((await get('/package.json')).status, 404, 'does not expose project files');
-  assert.equal((await getWithHost('/index.html', `rebind.example:${port}`)).status, 421, 'rejects rebinding Host headers');
+  assert.equal((await getRaw('/index.html', { Host: `rebind.example:${port}` })).status, 421, 'rejects rebinding Host headers');
   assert.equal((await get('/index.html')).status, 200, 'still alive after traversal attempts');
 
   // aborted requests must not take it down either
