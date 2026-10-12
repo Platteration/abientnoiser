@@ -7,11 +7,12 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { hostGate } = require('./hosts');
+const { siteFiles } = require('./site');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT) || 5173;
-// Loopback by default: this serves the whole checkout, which is nobody else's
-// business on a shared network. HOST=0.0.0.0 opts in to phone testing.
+// Loopback by default: HOST=0.0.0.0 opts in to phone testing, and what is served is the
+// website alone (siteList below), not the checkout it sits in.
 const host = process.env.HOST || '127.0.0.1';
 // The names a request may carry in Host: loopback names, ALLOWED_HOST (a comma-separated
 // list), and — bound off loopback — this machine's own names, so a phone can reach it by
@@ -20,15 +21,37 @@ const hostAllowed = hostGate({ host, allowedHost: process.env.ALLOWED_HOST });
 // The root as the filesystem names it, so that a resolved path is compared with its like.
 const realRoot = fs.realpathSync.native(root);
 
-/** Whether a path the filesystem resolved may be served: inside the checkout, and through
- *  no dot-named folder. The URL rules below read the address as it is written, split on
- *  '/', but what opens is the filesystem's call: on Windows '\' separates too, and GIT~1,
- *  the 8.3 short name of .git, opens .git, so `/%5C.git%5Cconfig` and `/GIT~1/config` both
- *  passed those rules and served .git/config; anywhere, a link goes where it points. The
- *  resolved path has none of those spellings left in it. */
+// The website's files, as scripts/site.js lists them for the deploy: the service worker's
+// SHELL and the few files beside it. Read at the start, so a sw.js with no list stops the
+// server there, and again on every request, so a module just added to the shell is served
+// without a restart; while sw.js is mid-edit and gives no list, the last one it gave stands.
+let listed;
+try {
+  listed = new Set(siteFiles());
+} catch (e) {
+  console.error(`Ambient Noiser: ${e.message}, so there is no site to serve`);
+  process.exit(1);
+}
+let unlisted = false;
+function siteList() {
+  try {
+    listed = new Set(siteFiles());
+    unlisted = false;
+  } catch (e) {
+    if (!unlisted) console.error(`Ambient Noiser: ${e.message}; serving the files it listed last`);
+    unlisted = true;
+  }
+  return listed;
+}
+
+/** Whether a path the filesystem resolved may be served: it is one of the website's files.
+ *  The address as written is not the file that opens: on Windows '\' separates too and
+ *  GIT~1, the 8.3 short name of .git, opens .git, so `/%5C.git%5Cconfig` and `/GIT~1/config`
+ *  once served .git/config past rules that split the address on '/'; anywhere, a link goes
+ *  where it points. The resolved path has none of those spellings left in it, and one outside
+ *  the checkout (a '..' first, or another drive's absolute path) names no file of the list. */
 function servable(real) {
-  const rel = path.relative(realRoot, real);
-  return !path.isAbsolute(rel) && !rel.split(path.sep).some((part) => part.startsWith('.'));
+  return siteList().has(path.relative(realRoot, real).split(path.sep).join('/'));
 }
 
 const types = {
@@ -45,7 +68,7 @@ const server = http.createServer((req, res) => {
   // Binding to loopback stops a network peer; it does not stop a browser that has been
   // told the attacker's own name resolves to 127.0.0.1 (DNS rebinding). The rebound
   // request still carries that name in Host, so this is the check that keeps a visited
-  // web page out of the checkout, and it is the first answer, before the path is even
+  // web page from reading this server, and it is the first answer, before the path is even
   // looked at. A request that claims no name at all is answered: a browser always
   // sends Host and a page cannot set it, so the only clients that arrive without one
   // are `curl --http1.0` and raw-socket probes on loopback.
@@ -61,16 +84,11 @@ const server = http.createServer((req, res) => {
     return res.end('Bad request');
   }
   // fs.stat throws synchronously on a NUL byte, which would take the process with it.
-  // Every other control character goes the same way, so a raw CR or LF cannot reach a
-  // header either.
-  if (/[\u0000-\u001f]/.test(url)) {
+  // Every other control character (DEL included) goes the same way, so a raw CR or LF
+  // cannot reach a header either.
+  if (/[\u0000-\u001f\u007f]/.test(url)) {
     res.writeHead(400);
     return res.end('Bad request');
-  }
-  // .git, .github and friends live inside the root, so the traversal guard misses them
-  if (url.split('/').some((part) => part.startsWith('.') && part !== '.' && part !== '..')) {
-    res.writeHead(404);
-    return res.end('Not found');
   }
   let file = path.join(root, url === '/' ? 'index.html' : url);
   if (path.relative(root, file).startsWith('..')) {

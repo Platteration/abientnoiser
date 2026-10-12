@@ -71,18 +71,20 @@ npm start            # serves http://localhost:5173
 # or: python3 -m http.server 5173
 ```
 
-`npm start` listens on loopback only, because it serves the whole checkout. To reach
-it from a phone on the same network, opt in with `HOST=0.0.0.0 npm start`: the server
-then answers to this machine's addresses, its hostname and mDNS names such as
-`laptop.local`, and reads its interfaces again on a miss, so a Wi-Fi joined after the
-start still works. Reaching it any other way — a port forward, a tunnel, a name your
-router hands out — needs that address in `ALLOWED_HOST` (a comma-separated list, ports
-ignored). Any other `Host` gets a 403, and one line on the terminal the first time that
-name is seen, which is what keeps a page you visit from reaching the checkout by
-pointing its own name at 127.0.0.1. Whatever the address, a file is served only when the
-path the filesystem resolves it to is inside the checkout and passes through no dot-named
-folder, so `.git` stays out however it is spelled: on Windows that includes `\` and short
-names such as `GIT~1`, and anywhere a link that points outside.
+`npm start` serves the website and nothing else of the checkout: the files
+`scripts/site.js` lists (see Deploy), with the service worker's shell read again on every
+request, so a module added to it is served without a restart; anything else is a 404. It
+listens on loopback only. To reach it from a phone on the same network, opt in with
+`HOST=0.0.0.0 npm start`: the server then answers to this machine's addresses, its
+hostname and mDNS names such as `laptop.local`, and reads its interfaces again on a miss,
+so a Wi-Fi joined after the start still works. Reaching it any other way — a port forward,
+a tunnel, a name your router hands out — needs that address in `ALLOWED_HOST` (a
+comma-separated list, ports ignored). Any other `Host` gets a 403, and one line on the
+terminal the first time that name is seen, which is what keeps a page you visit from
+reaching the server by pointing its own name at 127.0.0.1. Whatever the address, a file is
+served only when the path the filesystem resolves it to is one of the site's files, so
+`.git`, the notes and the tests stay out however they are spelled: on Windows that
+includes `\` and short names such as `GIT~1`, and anywhere a link that points elsewhere.
 
 Opening `index.html` from disk also works, except for the offline service worker.
 

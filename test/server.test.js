@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const site = require('../scripts/site.js');
+
 const serve = path.resolve(__dirname, '..', 'scripts', 'serve.js');
 const port = 5700 + Math.floor(Math.random() * 200);
 
@@ -87,14 +89,21 @@ test('the dev server survives the requests a browser actually makes', async (t) 
   // and every other control character goes the same way, so a raw CR or LF cannot reach a header
   assert.equal((await get('/a%0d%0aX-Evil:%201')).status, 400, 'rejects CR LF in the path');
   assert.equal((await get('/index.html%09')).status, 400, 'rejects a tab in the path');
+  assert.equal((await get('/index.html%7f')).status, 400, 'rejects DEL, the last control character');
 
-  // the checkout is not the site: dotfiles stay unreachable even though they are in the root
+  // the checkout is not the site: dotfiles stay unreachable even though they are in the root,
+  // and so does every other file the site does not list (the next test walks them all)
   assert.equal((await get('/.git/HEAD')).status, 404, 'does not serve the git directory');
+  assert.equal((await get('/.git/config')).status, 404, 'nor the repository\'s configuration');
   assert.equal((await get('/.github/workflows/ci.yml')).status, 404, 'does not serve the workflows');
+  assert.equal((await get('/package.json')).status, 404, 'does not serve the project files');
 
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
   assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);
+  // fetch() would resolve the encoded '..' segments away before sending; http.request sends them
+  assert.equal((await raw(port, '/js/%2e%2e/%2e%2e/package.json', `localhost:${port}`)).status, 403, 'a step out through a folder of the site');
+  assert.equal((await raw(port, '/index.html', `rebind.example:${port}`)).status, 403, 'and a rebound Host is refused here too');
   assert.equal((await get('/index.html')).status, 200, 'still alive after traversal attempts');
 
   // aborted requests must not take it down either
@@ -106,6 +115,45 @@ test('the dev server survives the requests a browser actually makes', async (t) 
   }));
   await new Promise((r) => setTimeout(r, 200));
   assert.equal((await get('/index.html')).status, 200, 'still alive after aborted requests');
+});
+
+/** Every file under the checkout, as paths relative to it, but for node_modules and .git,
+ *  which are named below by one file each: tracked or not, none of it is the site's unless
+ *  scripts/site.js lists it. */
+function checkoutFiles(dir) {
+  const out = [];
+  const walk = (rel) => {
+    for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+      const p = rel ? `${rel}/${e.name}` : e.name;
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      if (e.isDirectory()) walk(p); else out.push(p);
+    }
+  };
+  walk('');
+  return out;
+}
+
+const address = (f) => `/${f.split('/').map(encodeURIComponent).join('/')}`;
+
+// The dev server is the website's first host, so it serves what the deploy publishes
+// (scripts/site.js: the service worker's shell and the files beside it) and answers 404 for
+// the rest of the checkout: the notes, the tests, the dev server's own source, the lockfile,
+// the hosting configs and whatever a developer leaves lying in the tree.
+test('the dev server serves the website, and nothing else of the checkout', async (t) => {
+  const root = path.resolve(__dirname, '..');
+  const p = port + 5;
+  await started(p, {}, t);
+  const files = new Set(site.siteFiles());
+  assert.equal((await raw(p, '/', `localhost:${p}`)).status, 200, 'the page at /');
+  for (const f of files) assert.equal((await raw(p, address(f), `localhost:${p}`)).status, 200, `serves /${f}`);
+  const others = [...checkoutFiles(root).filter((f) => !files.has(f)), '.git/config', '.git/HEAD', 'node_modules/playwright/package.json'];
+  for (const f of ['package.json', 'package-lock.json', 'README.md', 'CLAUDE.md', 'scripts/serve.js', 'test/server.test.js', '_headers', 'deploy/nginx.conf']) {
+    assert.ok(others.includes(f), `${f} is one of the checkout's files outside the site`);
+  }
+  for (const f of others) assert.equal((await raw(p, address(f), `localhost:${p}`)).status, 404, `answers 404 for /${f}`);
+  for (const dir of ['js/', 'css/', 'scripts/', 'test/', '.well-known/']) {
+    assert.equal((await raw(p, `/${dir}`, `localhost:${p}`)).status, 404, `answers 404 for the folder /${dir}`);
+  }
 });
 
 // Binding to loopback stops a network peer, not a browser that has been told the
@@ -156,35 +204,77 @@ test('bound to a LAN address, the dev server answers to this machine\'s own addr
   assert.equal((await raw(p, '/index.html', 'evil.local.example')).status, 403, 'nor to a name that merely contains .local');
 });
 
-/** A checkout of its own: the dev server's two files, a page, and a dot-named folder with a
- *  file in it. The server serves the folder its own script sits under, so a copy serves this
- *  tree, and a test can put links in it that the repository does not have. */
+/** The site's list in a checkout of the tests' own: a page, a module in a folder with a long
+ *  name, and two addresses that are links in the tree — so the list names them, and what
+ *  they resolve to is what decides. */
+const SHELL = ['./', './index.html', './library/page.js', './alias/key.txt', './elsewhere.txt'];
+const sw = (shell) => `const VERSION = 'test';\nconst SHELL = [\n  ${shell.map((f) => `'${f}'`).join(', ')},\n];\n`;
+
+/** A checkout of its own: the dev server's three files, a service worker whose SHELL is the
+ *  list above, the files it lists, and a dot-named folder with a file in it. The server
+ *  serves the website of the folder its own script sits under, so a copy serves this tree,
+ *  and a test can put links and list entries in it that the repository does not have. */
 function checkout(t) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'an-serve-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const tree = path.join(base, 'checkout');
   fs.mkdirSync(path.join(tree, 'scripts'), { recursive: true });
-  for (const f of ['serve.js', 'hosts.js']) fs.copyFileSync(path.join(__dirname, '..', 'scripts', f), path.join(tree, 'scripts', f));
+  for (const f of ['serve.js', 'hosts.js', 'site.js']) fs.copyFileSync(path.join(__dirname, '..', 'scripts', f), path.join(tree, 'scripts', f));
+  fs.writeFileSync(path.join(tree, 'sw.js'), sw(SHELL));
   fs.writeFileSync(path.join(tree, 'index.html'), '<!DOCTYPE html><title>page</title>');
+  fs.mkdirSync(path.join(tree, 'library'));
+  fs.writeFileSync(path.join(tree, 'library', 'page.js'), '// a module of the site');
   fs.mkdirSync(path.join(tree, '.secret'));
   fs.writeFileSync(path.join(tree, '.secret', 'key.txt'), 'not for the network');
   fs.writeFileSync(path.join(base, 'outside.txt'), 'not in the checkout');
   return { base, tree, script: path.join(tree, 'scripts', 'serve.js') };
 }
 
-// The dot-folder and traversal rules read the address as it is written, split on '/'. What
-// opens is up to the filesystem, which follows a link wherever it points — so the answer is
-// decided again on the path the filesystem resolves.
+// The traversal rule reads the address as it is written. What opens is up to the
+// filesystem, which follows a link wherever it points — so whether a file is the site's is
+// decided on the path the filesystem resolves, not on the address the site lists.
 test('the dev server decides on the file the filesystem opens, not on how the address is spelled', async (t) => {
   const { base, tree, script } = checkout(t);
   fs.symlinkSync('.secret', path.join(tree, 'alias'));
   fs.symlinkSync(path.join(base, 'outside.txt'), path.join(tree, 'elsewhere.txt'));
+  fs.symlinkSync('library', path.join(tree, 'shortcut'));
   const p = port + 3;
   await started(p, {}, t, [script]);
   assert.equal((await raw(p, '/index.html', 'localhost')).status, 200, 'the page');
+  assert.equal((await raw(p, '/library/page.js', 'localhost')).status, 200, 'a module of the site');
+  assert.equal((await raw(p, '/shortcut/page.js', 'localhost')).status, 200, 'and by a link to its folder, since the file that opens is the site\'s');
   assert.equal((await raw(p, '/.secret/key.txt', 'localhost')).status, 404, 'a dot folder by its own name');
-  assert.equal((await raw(p, '/alias/key.txt', 'localhost')).status, 404, 'nor by a link to it');
-  assert.equal((await raw(p, '/elsewhere.txt', 'localhost')).status, 404, 'nor a file outside the checkout by a link to it');
+  assert.equal((await raw(p, '/alias/key.txt', 'localhost')).status, 404, 'nor by a link to it, though the list names that address');
+  assert.equal((await raw(p, '/elsewhere.txt', 'localhost')).status, 404, 'nor a file outside the checkout by a listed link to it');
+  assert.equal((await raw(p, '/scripts/serve.js', 'localhost')).status, 404, 'nor the dev server\'s own source');
+});
+
+// The list is the service worker's, read as sw.js has it at the time of the request: a module
+// added to the shell is served without a restart, a sw.js caught mid-edit leaves the last list
+// standing (and says so once), and one that gives no list at all stops the server at the start.
+test('the dev server reads the site\'s list as sw.js has it now', async (t) => {
+  const { tree, script } = checkout(t);
+  fs.writeFileSync(path.join(tree, 'library', 'new.js'), '// added while the server runs');
+  const p = port + 6;
+  const { stderr } = await started(p, {}, t, [script]);
+  assert.equal((await raw(p, '/library/new.js', 'localhost')).status, 404, 'a file the shell does not list');
+  fs.writeFileSync(path.join(tree, 'sw.js'), sw([...SHELL, './library/new.js']));
+  assert.equal((await raw(p, '/library/new.js', 'localhost')).status, 200, 'listed in the shell, it is served without a restart');
+  fs.writeFileSync(path.join(tree, 'sw.js'), "const VERSION = 'mid-edit';\n");
+  assert.equal((await raw(p, '/library/new.js', 'localhost')).status, 200, 'while sw.js gives no list, the last one stands');
+  assert.equal((await raw(p, '/index.html', 'localhost')).status, 200, 'for the page too');
+  assert.equal((await raw(p, '/library/other.js', 'localhost')).status, 404, 'and nothing it did not name');
+  assert.equal(((await stderr()).match(/declares no SHELL/g) || []).length, 1, 'said once on the terminal, not once a request');
+
+  const broken = checkout(t);
+  fs.writeFileSync(path.join(broken.tree, 'sw.js'), "const VERSION = 'none';\n");
+  const child = spawn(process.execPath, [broken.script], { env: { ...process.env, PORT: String(port + 7) }, stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => child.kill());
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  const code = await new Promise((resolve) => child.on('exit', resolve));
+  assert.notEqual(code, 0, 'a site with no list is not served at all');
+  assert.match(err, /Ambient Noiser: .*declares no SHELL/, `and the terminal says why: ${err}`);
 });
 
 /** Windows, as far as serve.js can tell: `path` is path.win32, and the filesystem resolves a
@@ -197,7 +287,7 @@ const WINDOWS = String.raw`
 const Module = require('module');
 const fs = require('fs');
 const path = require('path');
-const SHORT = { 'SECRET~1': '.secret', 'SCRIPT~1': 'scripts' };
+const SHORT = { 'SECRET~1': '.secret', 'SCRIPT~1': 'scripts', 'LIBRAR~1': 'library' };
 const OTHER = process.env.OTHER_DRIVE;
 const long = (part) => (Object.hasOwn(SHORT, part.toUpperCase()) ? SHORT[part.toUpperCase()] : part);
 const local = (p) => {
@@ -239,9 +329,11 @@ test('on Windows, a backslash, an 8.3 short name or another drive does not get p
   fs.symlinkSync(path.join(other, 'outside.txt'), path.join(tree, 'elsewhere.txt'));
   const p = port + 4;
   await started(p, { OTHER_DRIVE: other }, t, ['--require', preload, script]);
-  // these two show the platform's rules are the ones in force: neither file exists on Linux
-  assert.equal((await raw(p, '/scripts%5Chosts.js', 'localhost')).status, 200, 'a backslash separates');
-  assert.equal((await raw(p, '/SCRIPT~1/hosts.js', 'localhost')).status, 200, 'and a short name opens its folder');
+  // these two show the platform's rules are the ones in force: neither address names a file on Linux
+  assert.equal((await raw(p, '/library%5Cpage.js', 'localhost')).status, 200, 'a backslash separates');
+  assert.equal((await raw(p, '/LIBRAR~1/page.js', 'localhost')).status, 200, 'and a short name opens its folder');
+  assert.equal((await raw(p, '/scripts%5Chosts.js', 'localhost')).status, 404, 'the dev server\'s own source is not the site behind a backslash');
+  assert.equal((await raw(p, '/SCRIPT~1/hosts.js', 'localhost')).status, 404, 'nor by its folder\'s short name');
   assert.equal((await raw(p, '/%5C.secret%5Ckey.txt', 'localhost')).status, 404, 'a dot folder behind backslashes');
   assert.equal((await raw(p, '/scripts%5C..%5C.secret%5Ckey.txt', 'localhost')).status, 404, 'or behind a step back');
   assert.equal((await raw(p, '/SECRET~1/key.txt', 'localhost')).status, 404, 'or by its 8.3 short name');
