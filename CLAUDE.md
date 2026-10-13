@@ -150,6 +150,11 @@ own top-level entries, so a new one goes there too). `js/guard.js` loads before 
 depends on nothing: with `no-js` still on `<html>`, a failed script or stylesheet, or a throw
 from one of the site's own scripts before `init()` adds `started` to `<html>`, it shows
 `#startNote` and the CSS hides the controls. After `started` the app reports its own failures.
+`init()` also takes `no-js` off and sets the note's `hidden` attribute there, because when
+`guard.js` or `css/style.css` is the file that failed nothing else does, and the app started
+but showed a note saying it had not (with the guard missing, its controls hidden behind it). A failed
+script keeps the note up all the same, since `.start-failed .start-note` outranks the attribute;
+`test/site.smoke.mjs` aborts each of the three in turn.
 
 **Timers with deadlines use `AN.ticker`, not `requestAnimationFrame`.** Browsers pause
 animation frames in hidden tabs, which is exactly when this app is playing. Drawing
@@ -182,7 +187,7 @@ no text carries an `aria-label`.
 npm test               # node --test: PRNG, theory, composer, styles, app shell, website, dev server
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
-npm run test:e2e       # Playwright + Chromium, end to end: the app, then the built website
+npm run test:e2e       # Playwright + Chromium, end to end: the app, then the built website; then nginx and Apache
 npm run test:conventions  # the repository's shape against CONVENTIONS.md
 npm run check          # npm test + test:conventions: the gate before a push
 npm run test:all
@@ -209,7 +214,18 @@ project site, sending each response the headers `_headers` gives it and answerin
 address with `404.html`; it drives the main flow and fails on any violation (collected from every
 document through an exposed binding, since a navigation drops a page's own record), page error,
 console error or request outside the site. Its Trusted Types probes are violations by design, so
-they run in pages of their own whose reports are not counted.
+they run in pages of their own whose reports are not counted. It also reads
+`document.featurePolicy.allowedFeatures()` back and fails on anything but `autoplay`,
+`clipboard-write` and the client hints, so a Playwright whose Chromium knows a new feature fails
+it until the feature is denied in `_headers`, `.htaccess` and `deploy/nginx.conf`.
+
+`test/hosts.smoke.mjs` (the last part of `test:e2e`) loads `deploy/nginx.conf` into the nginx
+installed where it runs and the built site's `.htaccess` into Apache, over https and behind a
+proxy that sends `X-Forwarded-Proto`, and reads every file of the site and a checkout's files
+planted beside it back off the real servers. A file that only website.test.js reads can still
+fail to load (`http2 on;` is nginx 1.25.1 and later; Ubuntu 24.04 ships 1.24) or send something
+other than it says (Apache's `env=HTTPS` is mod_ssl's alone, so behind a proxy HSTS never went
+out). Where nginx or Apache is missing it says so and passes, unless `CI` is set.
 
 `test:textures` is the only check on how things actually sound. Nobody has heard this
 app; spectral balance is the closest available proxy. It puts the piece into a bright

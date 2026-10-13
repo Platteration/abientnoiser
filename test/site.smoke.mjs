@@ -37,12 +37,15 @@ function readHeaders() {
   return rules;
 }
 const RULES = readHeaders();
-/** The headers a Netlify-style host sends for a path of the site ('/x', from its root). */
+/** The headers a Netlify-style host sends for a path of the site ('/x', from its root): every
+ *  matching rule's, and a header two of them set goes out with both values joined, as Netlify
+ *  and Cloudflare Pages send it (test/website.test.js refuses such a pair in _headers). */
 function headersFor(sitePath) {
   const out = {};
   for (const { pattern, headers } of RULES) {
     const hit = pattern.endsWith('/*') ? sitePath.startsWith(pattern.slice(0, -1)) : sitePath === pattern;
-    if (hit) Object.assign(out, headers);
+    if (!hit) continue;
+    for (const [name, value] of Object.entries(headers)) out[name] = Object.hasOwn(out, name) ? `${out[name]}, ${value}` : value;
   }
   return out;
 }
@@ -105,7 +108,7 @@ async function watched(context) {
   page.on('pageerror', (e) => seen.errors.push(String(e)));
   page.on('console', (m) => {
     const text = m.text();
-    if (m.type() === 'error' || /Content Security Policy|Content-Security-Policy|Permissions-Policy|Trusted Type/i.test(text)) seen.console.push(`${m.type()}: ${text}`);
+    if (m.type() === 'error' || /Content Security Policy|Content-Security-Policy|Permissions[- ]Policy|Trusted Type/i.test(text)) seen.console.push(`${m.type()}: ${text}`);
   });
   page.on('request', (r) => seen.requests.push(r.url()));
   return { page, seen };
@@ -161,6 +164,12 @@ try {
     check(sink === 'TypeError', `Trusted Types are enforced: an HTML string sink throws (${sink})`);
     check(enforced.started && !enforced.noJs && enforced.note === 'none', 'the app started, and the safety net\'s note stays hidden');
     check(page.workers().length >= 1, `the ticker runs in its blob: worker under the policy, not on a throttled setInterval (${page.workers().length} worker)`);
+    // Every feature this Chromium knows is off but the two the app uses. The client hints are
+    // set aside: they say only which hints the browser sends to this same site. A feature a
+    // newer Chromium adds shows up here until it is denied in all three host files.
+    const allowed = await page.evaluate(() => document.featurePolicy.allowedFeatures().filter((f) => !f.startsWith('ch-')).sort());
+    check(JSON.stringify(allowed) === JSON.stringify(['autoplay', 'clipboard-write']),
+      `Permissions-Policy leaves the page autoplay and clipboard-write and nothing else (${allowed.join(', ')})`);
 
     // ---- the main flow ----
     await page.click('#play');
@@ -313,6 +322,34 @@ try {
       mainShown: getComputedStyle(document.querySelector('main')).display !== 'none',
     }));
     check(state.noteShown && !state.mainShown && message.test(state.note), `${name}: the safety net shows a note in place of the controls ("${state.note.slice(0, 60)}…")`);
+    await ctx.close();
+  }
+
+  // The safety net's own file and the stylesheet can fail to load as well, and neither stops
+  // the app: a page that started shows its controls and no note saying it has not. A script
+  // the app starts without (the share image's) still leaves the note up and the controls
+  // hidden, since a feature of the page is missing.
+  for (const [name, file, wantNote] of [
+    ['the safety net itself', 'js/guard.js', false],
+    ['the stylesheet', 'css/style.css', false],
+    ['a script init() does not need', 'js/card.js', true],
+  ]) {
+    const ctx = await browser.newContext({ serviceWorkers: 'block' });
+    await ctx.route(`${home}${file}`, (r) => r.abort());
+    const p = await ctx.newPage();
+    await p.goto(home);
+    // not '.seg' visible: with no stylesheet the segments have no size
+    await p.waitForFunction(() => document.documentElement.classList.contains('started'), null, { timeout: 10000 }).catch(() => {});
+    await p.waitForTimeout(500);
+    const state = {
+      classes: await p.evaluate(() => document.documentElement.className),
+      started: await p.evaluate(() => document.documentElement.classList.contains('started')),
+      note: await p.locator('#startNote').isVisible(),
+      main: await p.locator('main').isVisible(),
+      toolbar: await p.locator('.toolbar').isVisible(),
+    };
+    const ok = state.started && state.note === wantNote && state.main === !wantNote && state.toolbar === !wantNote;
+    check(ok, `${file} does not load (${name}): the app starts, and ${wantNote ? 'the note stands in place of the controls' : 'its controls show with no note saying it has not'} (classes "${state.classes}", note ${state.note}, main ${state.main}, toolbar ${state.toolbar})`);
     await ctx.close();
   }
 } catch (e) {

@@ -33,16 +33,22 @@ function netlifyHeaders() {
   return rules;
 }
 
-/** Every `Header always set` in .htaccess, as { Header: value }. */
-function apacheHeaders() {
-  const out = {};
-  for (const m of read('.htaccess').matchAll(/^\s*Header\s+always\s+set\s+([A-Za-z-]+)\s+"([^"]*)"(?:\s+env=HTTPS)?\s*$/gm)) {
-    assert.ok(!Object.hasOwn(out, m[1]), `.htaccess: ${m[1]} is set once`);
-    out[m[1]] = m[2];
+/** Every `Header always set` in .htaccess, as { Header: value }, and the condition each one
+ *  that has a condition carries, as { Header: condition }. */
+function apacheRules() {
+  const conf = read('.htaccess');
+  const headers = {};
+  const conditions = {};
+  for (const m of conf.matchAll(/^\s*Header\s+always\s+set\s+([A-Za-z-]+)\s+"([^"]*)"(?:\s+(env=\S+|"expr=[^"]*"))?\s*$/gm)) {
+    assert.ok(!Object.hasOwn(headers, m[1]), `.htaccess: ${m[1]} is set once`);
+    headers[m[1]] = m[2];
+    if (m[3]) conditions[m[1]] = m[3];
   }
-  assert.doesNotMatch(read('.htaccess'), /^\s*Header\s+(?!always\s+set\s)/m, '.htaccess sets every header with `Header always set`');
-  return out;
+  assert.doesNotMatch(conf, /^\s*Header\s+(?!always\s+set\s)/m, '.htaccess sets every header with `Header always set`');
+  assert.equal([...conf.matchAll(/^\s*Header\b/gm)].length, Object.keys(headers).length, '.htaccess: every Header line is one this test reads, condition and all');
+  return { headers, conditions };
 }
+const apacheHeaders = () => apacheRules().headers;
 
 /** Every `add_header` in deploy/nginx.conf, as { Header: value }. Each must carry `always`, or
  *  nginx leaves it off the 404 page and every other error response. */
@@ -82,6 +88,45 @@ test('one policy: _headers, .htaccess and nginx.conf send the same headers with 
   assert.ok(HEADERS, '_headers has a /* rule');
   assert.deepEqual(apacheHeaders(), HEADERS, '.htaccess sends exactly what _headers does');
   assert.deepEqual(nginxHeaders(), HEADERS, 'deploy/nginx.conf sends exactly what _headers does');
+});
+
+/** What Netlify and Cloudflare Pages send for a path: the headers of every rule in _headers
+ *  whose path matches it. Both join the values of a header that two matching rules set, so
+ *  one rule per path may set a header, or what goes out is a list nobody wrote. */
+function netlifyHeadersFor(urlPath, matched = new Set()) {
+  const out = {};
+  for (const [pattern, headers] of Object.entries(netlifyHeaders())) {
+    if (!(pattern.endsWith('/*') ? urlPath.startsWith(pattern.slice(0, -1)) : urlPath === pattern)) continue;
+    matched.add(pattern);
+    for (const [name, value] of Object.entries(headers)) {
+      assert.ok(!Object.hasOwn(out, name), `_headers: ${name} is set by two rules that match ${urlPath}, and the host would send both values joined`);
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
+test('one policy on every path: no rule in _headers gives one of the site\'s paths anything Apache and nginx do not send', () => {
+  // .htaccess and nginx.conf send one set of headers on every response (the hosts suite,
+  // test/hosts.smoke.mjs, sees them do it); a rule for one path in _headers would make
+  // Netlify and Cloudflare Pages send something else there. The licence's type is the one
+  // exception, and Apache (ForceType) and nginx (default_type) give it the same.
+  const matched = new Set();
+  for (const p of ['/', ...site.siteFiles().map((f) => `/${f}`), '/no-such-page']) {
+    const { 'Content-Type': type, ...sent } = netlifyHeadersFor(p, matched);
+    assert.deepEqual(sent, HEADERS, `${p}: _headers sends the /* set, nothing more and nothing different`);
+    assert.equal(type, p === '/LICENSE' ? 'text/plain; charset=utf-8' : undefined, `${p}: the Content-Type _headers sets`);
+  }
+  assert.deepEqual(Object.keys(netlifyHeaders()).filter((pattern) => !matched.has(pattern)), [], 'every rule in _headers matches a path of the site, so this test read it');
+});
+
+test('Apache sends HSTS on every https response, behind a TLS-terminating proxy too', () => {
+  // The redirect treats a request as https when mod_ssl says so or a proxy says so in
+  // X-Forwarded-Proto; env=HTTPS is mod_ssl's alone, so behind a proxy HSTS never went out.
+  const conf = read('.htaccess');
+  assert.match(conf, /^\s*RewriteCond %\{HTTPS\} !=on\n\s*RewriteCond %\{HTTP:X-Forwarded-Proto\} !=https\n\s*RewriteRule \^ https:/m, 'the redirect to https');
+  assert.deepEqual(apacheRules().conditions, { 'Strict-Transport-Security': `"expr=%{HTTPS} == 'on' || %{HTTP:X-Forwarded-Proto} == 'https'"` },
+    'HSTS alone has a condition, and it is the redirect\'s two cases of https');
 });
 
 test('one policy: every page carries the header policy in its <meta>, less what a <meta> cannot say', () => {
@@ -130,13 +175,33 @@ test('the style hash is the 404 page\'s <style>, and nothing else on either page
   assert.deepEqual(allowed, ["'self'", ...hashes], `style-src is 'self' and the hash of each inline <style> as it is now: ${hashes.join(' ')}`);
 });
 
+/** Every way a script can hand the page a string to parse as HTML or run as script. Under
+ *  require-trusted-types-for each throws, but only on a path the browser suites drive; this
+ *  names the line before a visitor finds it. */
+const SINKS = /\.(innerHTML|outerHTML)\s*\+?=|\[\s*['"`](innerHTML|outerHTML|srcdoc)['"`]\s*\]|insertAdjacentHTML|document\.write|\.srcdoc\s*=|setHTMLUnsafe|parseHTMLUnsafe|\beval\(|\bFunction\(|createContextualFragment|DOMParser|\bset(Timeout|Interval)\(\s*['"`]/;
+
+test('the HTML-sink lint sees every way of writing a sink, and nothing else', () => {
+  const sinks = [
+    'el.innerHTML = s', 'el.innerHTML += s', 'el.outerHTML = s', 'el.outerHTML+=s',
+    "el['innerHTML'] = s", 'el["outerHTML"] = s', 'el[`innerHTML`] += s', "frame[ 'srcdoc' ] = s",
+    "el.insertAdjacentHTML('beforeend', s)", 'document.write(s)', 'document.writeln(s)', 'frame.srcdoc = s',
+    'el.setHTMLUnsafe(s)', 'Document.parseHTMLUnsafe(s)', 'eval(s)', 'new Function(s)', 'Function(s)()',
+    'document.createRange().createContextualFragment(s)', "new DOMParser().parseFromString(s, 'text/html')",
+    "setTimeout('go()', 1)", 'setInterval("go()", 1)', 'setTimeout(`go()`, 1)',
+  ];
+  for (const line of sinks) assert.match(line, SINKS, `the lint sees ${line}`);
+  const safe = [
+    'el.textContent = s', "el.append(h('b', {}, s))", 'setTimeout(go, 1)', 'setInterval(() => go(), 1)',
+    'isFunction(f)', "el.setAttribute('title', s)", 'retrieval(s)', "el.dataset.html = 'x'",
+  ];
+  for (const line of safe) assert.doesNotMatch(line, SINKS, `the lint leaves ${line} alone`);
+});
+
 test('Trusted Types: the policy names exactly the policies the scripts create, and no script writes HTML', () => {
   const names = directives(HEADERS['Content-Security-Policy']).find(([name]) => name === 'trusted-types').slice(1);
   const sources = site.siteFiles().filter((f) => f.endsWith('.js')).map((f) => [f, read(f)]);
   const created = sources.flatMap(([, src]) => [...src.matchAll(/createPolicy\('([^']+)'/g)].map((m) => m[1]));
   assert.deepEqual([...names].sort(), [...created].sort(), 'trusted-types lists each createPolicy name, once, and nothing else');
-  // Under require-trusted-types-for these throw; this names the line before a browser does.
-  const SINKS = /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|\.srcdoc\s*=|\beval\(|new Function\(|createContextualFragment|DOMParser/;
   for (const [file, src] of sources) {
     const lines = src.split('\n').flatMap((line, i) => (SINKS.test(line) && !/^\s*(\/\/|\*|\/\*)/.test(line) ? [`${file}:${i + 1}: ${line.trim()}`] : []));
     assert.deepEqual(lines, [], 'text reaches the page through textContent and createElement, never as HTML');
@@ -197,6 +262,13 @@ test('the site is the shell, the worker and the files every site has, and nothin
   const pages = read('.github/workflows/pages.yml');
   assert.match(pages, /^\s+- run: mkdir dist && git archive HEAD -- \$\(node scripts\/site\.js --list\) \| tar -x -C dist$/m, 'the Pages deploy archives exactly the site\'s files out of the commit');
   assert.match(pages, /^\s+path: dist$/m, 'and uploads that folder');
+  // actions/upload-pages-artifact v3 (this sha) packs every file under the folder but .git and
+  // .github; v4 and later also leave out every name that starts with a dot unless
+  // include-hidden-files is true, which would publish the site without .well-known/security.txt.
+  const V3 = '56afc609e74202658d3ffba0e8f6dda462b719fa';
+  const upload = pages.match(/^(\s+)- uses: actions\/upload-pages-artifact@([0-9a-f]{40})\b[^\n]*\n((?:\1 {2}[^\n]*\n)*)/m);
+  assert.ok(upload, 'pages.yml uploads with actions/upload-pages-artifact, pinned by sha');
+  if (upload[2] !== V3) assert.match(upload[3], /^\s+include-hidden-files: true$/m, `upload-pages-artifact@${upload[2]} is not v3: set include-hidden-files: true, or .well-known/security.txt is left out of the site`);
 });
 
 test('scripts/site.js writes the site, and the config each host reads, into an empty folder', () => {
@@ -282,10 +354,20 @@ test('security.txt names a contact, the policy and an expiry no more than a year
     const m = line.match(/^([A-Za-z-]+): (.+)$/);
     if (m) (fields[m[1]] = fields[m[1]] || []).push(m[2]);
   }
-  // SECURITY.md asks for a private report, so the contact is the repository's private form.
-  assert.deepEqual(fields.Contact, ['https://github.com/Platteration/abientnoiser/security/advisories/new']);
+  // SECURITY.md asks for a private report, so the first contact is the repository's private
+  // form. That form is off until the owner switches it on, and while it is off there is no
+  // form to reach, so the second is the issues, where SECURITY.md says to ask for a private
+  // channel.
+  assert.deepEqual(fields.Contact, [
+    'https://github.com/Platteration/abientnoiser/security/advisories/new',
+    'https://github.com/Platteration/abientnoiser/issues',
+  ]);
   assert.match(read('SECURITY.md'), /Report a vulnerability/);
-  assert.deepEqual(fields.Policy, ['https://github.com/Platteration/abientnoiser/blob/HEAD/SECURITY.md']);
+  assert.match(read('SECURITY.md'), /If that button is not there[^.]*open an issue[^.]*private channel/);
+  // The policy as it is on the branch the Pages deploy publishes, not blob/HEAD: HEAD is the
+  // repository's default branch, which need not be that one and need not carry SECURITY.md.
+  const [deployed] = read('.github/workflows/pages.yml').match(/^\s+push:\n\s+branches: \[(\S+)\]$/m).slice(1);
+  assert.deepEqual(fields.Policy, [`https://github.com/Platteration/abientnoiser/blob/${deployed}/SECURITY.md`]);
   assert.deepEqual(fields['Preferred-Languages'], ['en']);
   assert.equal(fields.Expires.length, 1);
   const expires = Date.parse(fields.Expires[0]);

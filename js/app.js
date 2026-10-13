@@ -100,8 +100,17 @@
     if (state.fromShare) toast('Playing a shared mix — save it to keep it');
     requestAnimationFrame(tickUI);
     state.logic = AN.ticker(500, tickLogic);
-    // the safety net (js/guard.js) stands down: from here the app reports its own failures
-    document.documentElement.classList.add('started');
+    // The safety net (js/guard.js) stands down: from here the app reports its own failures.
+    // no-js comes off here too, because when guard.js is the file that did not load nothing
+    // else takes it off, and the controls of a running app stayed hidden behind a note saying
+    // it had not started. The note is hidden by its attribute, which holds without
+    // css/style.css: when the stylesheet is what failed, the app runs unstyled and the note
+    // claiming it could not start went away with nothing. A script that failed to load still
+    // keeps the note up, because the stylesheet's .start-failed rule outranks the attribute.
+    const html = document.documentElement;
+    html.classList.remove('no-js');
+    $('startNote').hidden = true;
+    html.classList.add('started');
   }
 
   /** Export lengths, capped at the loop length, plus the whole loop. */

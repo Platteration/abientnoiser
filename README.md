@@ -110,7 +110,7 @@ with the same headers in each:
 | Netlify | `node scripts/site.js <folder> --host=netlify` | `_headers`, `_redirects` |
 | Cloudflare Pages | `node scripts/site.js <folder> --host=cloudflare` | `_headers` |
 | Apache | `node scripts/site.js <folder> --host=apache` | `.htaccess` |
-| nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand |
+| nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand (any nginx from 1.9.5: Debian 12's 1.22 and Ubuntu 24.04's 1.24 load it) |
 | GitHub Pages | the workflow | none: see below |
 
 Serve it over HTTPS only: the Apache and nginx settings redirect plain `http://`, and Netlify,
@@ -120,8 +120,10 @@ settings serve the site's own files and answer 404 for everything else, and `_re
 the same for the repository's files on Netlify; Cloudflare Pages has no 404 rule, so there the
 folder is the only protection.
 
-**Response headers.** The same set is in `_headers`, `.htaccess` and `deploy/nginx.conf`, and
-`test/website.test.js` fails when one of them says something the others do not:
+**Response headers.** The same set is in `_headers`, `.htaccess` and `deploy/nginx.conf`, on every
+path of the site, and `test/website.test.js` fails when one of them says something the others do
+not; `test/hosts.smoke.mjs` loads the nginx and Apache files into real servers and reads the
+headers back off every response:
 
 | Header | Value | Why |
 | --- | --- | --- |
@@ -129,10 +131,10 @@ folder is the only protection.
 | `X-Content-Type-Options` | `nosniff` | A file is what its type says. |
 | `X-Frame-Options` | `DENY` | With `frame-ancestors 'none'`: no other site can frame the app and steer its buttons (clickjacking). |
 | `Referrer-Policy` | `no-referrer` | A share link carries a whole mix in its address; no other site is told it. |
-| `Permissions-Policy` | every powerful feature off — camera, microphone, location, sensors, USB, payment and the rest — but `autoplay` and `clipboard-write` for this site | The app plays sound and copies a link, nothing more. |
+| `Permissions-Policy` | every feature Chromium knows off — camera, microphone, location, sensors, USB, payment, local network access, the ad and attribution APIs, the on-device AI models, `unload` and the rest — but `autoplay` and `clipboard-write` for this site, and the client hints, which only say what the browser tells this same site | The app plays sound and copies a link, nothing more. The website suite reads the allowed features back in Chromium and fails on any other, so a feature a newer Chromium adds is denied in all three files before the suite passes. |
 | `Cross-Origin-Opener-Policy` | `same-origin` | Another window keeps no handle on this one. |
 | `Cross-Origin-Resource-Policy` | `same-origin` | Other sites cannot embed the app's files. |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Browsers remember to use HTTPS. |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Browsers remember to use HTTPS. Apache sends it over https, directly or behind a proxy that ended TLS and says so in `X-Forwarded-Proto` (the same two cases its redirect treats as https). |
 | `Cache-Control` | `no-cache` | No file name carries a version, so every load revalidates (an unchanged file costs a 304) and a deploy never mixes old scripts with new HTML. The service worker keeps the offline copy. |
 
 **GitHub Pages sends no headers.** The page carries the same policy in a `<meta>` tag, and the
@@ -162,11 +164,16 @@ a site in a sub-folder, put the folder in front.
 **If the page cannot start.** `js/guard.js` loads first and depends on nothing. With JavaScript
 off, with a file that did not load, or with a script that threw before the app started, the
 visitor reads a short note saying so where the controls would have been, rather than a page of
-controls that do nothing.
+controls that do nothing. When the file that did not load is the safety net itself or the
+stylesheet, the app still starts, and then shows its controls (unstyled, without the stylesheet)
+with no note.
 
-**Security contact.** `.well-known/security.txt` points to this repository's private
-vulnerability report form and to `SECURITY.md`. Its `Expires` date (8 October 2027) is renewed
-every year; `npm test` fails once it has passed.
+**Security contact.** `.well-known/security.txt` lists two contacts: this repository's private
+vulnerability report form and, for when the repository does not offer that form (it is off until
+the owner switches it on in the repository's settings), its issues, where a reporter asks for a
+private channel without the details. Its policy is `SECURITY.md` as it is on `main`, the branch
+the Pages deploy publishes. Its `Expires` date (8 October 2027) is renewed every year; `npm test`
+fails once it has passed.
 
 **Launch checklist**, with `SITE` the https address:
 
@@ -190,7 +197,7 @@ npm run test:conventions  # the repository's shape against CONVENTIONS.md
 npm run check             # the two above: the gate before a push
 npm run test:musical      # every style's whole loop, checked for wrong notes and wrong timing
 npm run test:textures     # each environment texture, checked against the sound it claims to be
-npm run test:e2e          # Playwright + Chromium, end to end: the app, then the built website
+npm run test:e2e          # Playwright + Chromium, end to end: the app, then the built website; then nginx and Apache
 npm run test:all          # all of the above
 ```
 
@@ -200,9 +207,9 @@ npm run test:all          # all of the above
 
 The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
 
-The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, and that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting. `test/website.test.js` holds the headers equal in every file that writes them, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404.
+The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting, and that it stays quiet when the file that did not load is its own or the stylesheet and the app starts anyway. `test/website.test.js` holds the headers equal in every file that writes them and on every path of the site, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404. The hosts suite (`test/hosts.smoke.mjs`, the last part of `test:e2e`) runs the real thing: `deploy/nginx.conf` in the nginx installed where it runs and the built site's `.htaccess` in the Apache installed there (over https, and behind a proxy that ended TLS), serving the site with a checkout's files planted beside it, and checks every file of the site answers 200 with every header and everything else the not-found page. It says so and passes where nginx or Apache is not installed, unless `CI` is set; GitHub's Ubuntu runner has both.
 
-Both suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile.
+The suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile.
 
 ## Project layout
 

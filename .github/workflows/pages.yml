@@ -51,6 +51,8 @@ jobs:
         run: |
           sed -i "s/^const VERSION = .*/const VERSION = 'ambient-noiser-${GITHUB_SHA:0:8}';/" dist/sw.js
           grep -q "ambient-noiser-${GITHUB_SHA:0:8}" dist/sw.js
+      # v4 and later leave out every dotfile, .well-known/security.txt with them, unless
+      # include-hidden-files: true is set; test/website.test.js fails on a newer pin without it.
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: dist

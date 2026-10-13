@@ -6,7 +6,9 @@ Please report security issues privately rather than opening a public issue.
 
 Use GitHub's private vulnerability reporting on this repository:
 **Security → Report a vulnerability**. That opens a private advisory visible
-only to the maintainers.
+only to the maintainers. If that button is not there (the form is off until the
+repository's owner switches it on), open an issue that says you have a security
+report and asks for a private channel, and leave the details out of it.
 
 Include what you need to make the problem reproducible: the affected version
 or commit, the steps or input that trigger it, and what you observed. A proof
@@ -30,8 +32,9 @@ well: a way to run script or load a resource the Content-Security-Policy or its 
 Types rules should forbid; a page of this site that another site can frame; a file published
 that is not part of the site (`scripts/site.js` lists the site); and settings in `_headers`,
 `_redirects`, `.htaccess` or `deploy/nginx.conf` that are wrong, incomplete or not the same as
-the others. A deployed site's `/.well-known/security.txt` points to this page; its `Expires`
-date is renewed every year.
+the others. A deployed site's `/.well-known/security.txt` points to this page as it is on
+`main`, the branch the Pages deploy publishes, and lists the two ways in above, in that order;
+its `Expires` date is renewed every year.
 
 Out of scope: vulnerabilities in third-party dependencies that are already
 public and have an upstream fix, findings that require an attacker to already

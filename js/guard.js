@@ -3,8 +3,9 @@
    reads a short note where the controls were rather than a page of controls that do
    nothing. The page starts with class="no-js" on <html>, which shows the same note in
    place of the controls; scripts are running, so that comes off at once. js/app.js adds
-   "started" to <html> as the last step of init(): after that the app reports its own
-   failures and this file stays out of the way. */
+   "started" to <html> as the last step of init(), and there also takes no-js off and hides
+   the note (for when this file, or the stylesheet, is what did not load): after that the
+   app reports its own failures and this file stays out of the way. */
 (function () {
   'use strict';
   var root = document.documentElement;
