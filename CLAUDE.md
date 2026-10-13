@@ -268,7 +268,7 @@ empty; a change is made there and copied, never here), with this app's catalogue
 
 ```bash
 npm run typecheck      # tsc over server/ and functions/: the kit and this app's API entry points
-npm test               # node --test: PRNG, theory, composer, styles, app shell, website, dev server, account, API, and the kit's self-test
+npm test               # node --test: PRNG, theory, composer, styles, app shell, website, CI's runner, dev server, account, API, and the kit's self-test
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
 npm run test:e2e       # Playwright + Chromium, end to end: the app, then the built website; then nginx and Apache
@@ -324,7 +324,12 @@ Playwright, TypeScript and `@types/node` are the only dependencies, all of them 
 development: Playwright for the browser suites, TypeScript for `npm run typecheck`, which the
 conventions test requires once the kit's `.d.ts` files are in the tree (the kit passes this
 repository's strict `tsconfig.json` unchanged). The site ships none of them; the lockfile pins
-the versions, and CI installs with `npm ci`.
+the versions, and CI installs with `npm ci`. CI's check job and the Pages build run on
+`ubuntu-24.04`, not `ubuntu-latest`, which becomes Ubuntu 26.04 from 2026-10-19: Playwright 1.56.1
+has no Chromium build for 26.04 ("Playwright does not support chromium on ubuntu26.04-x64").
+`test/ci.test.js` asks the locked Playwright's own CLI (`install --dry-run`, told the platform)
+whether it has a build for the release each job that installs the browser names, so raising
+Playwright, and then the runner, are one change.
 
 ## Things deliberately not done
 

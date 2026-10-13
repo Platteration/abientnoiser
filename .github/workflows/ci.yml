@@ -24,7 +24,10 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # A named Ubuntu release, not ubuntu-latest, which moves to 26.04 from 2026-10-19: the
+    # lockfile's Playwright 1.56.1 has no Chromium build for 26.04, and its browser install fails
+    # there. Raising Playwright is what moves this on; test/ci.test.js holds the two in step.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

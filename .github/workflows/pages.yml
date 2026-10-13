@@ -19,7 +19,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # A named release, as ci.yml's check job: the browser install below fails on a runner the
+    # locked Playwright has no Chromium build for (test/ci.test.js).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
