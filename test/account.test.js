@@ -163,7 +163,10 @@ test('signed in: "Signed in as", Sign out, Delete account and Buy, which goes to
   assert.deepEqual(p.seen.leaves, ['checkout']);
   assert.deepEqual(p.seen.assigned, ['https://checkout.stripe.com/c/pay/cs_test_1']);
 
-  for (const url of ['https://evil.example/c/pay/cs_1', 'http://checkout.stripe.com/c/pay/cs_1', 'https://checkout.stripe.com.evil.example/c', 'https://user@checkout.stripe.com/c', 'javascript:alert(1)', '//checkout.stripe.com/c']) {
+  // Stripe's hosted Checkout, exactly: not a lookalike host, not another stripe.com host, not
+  // another port of the right one
+  for (const url of ['https://evil.example/c/pay/cs_1', 'http://checkout.stripe.com/c/pay/cs_1', 'https://checkout.stripe.com.evil.example/c', 'https://user@checkout.stripe.com/c', 'javascript:alert(1)', '//checkout.stripe.com/c',
+    'https://evilstripe.com/c', 'https://files.stripe.com/c', 'https://checkout.stripe.com:8443/c']) {
     routes['POST checkout'] = checkout(url);
     const q = page(routes);
     await q.ctl.ready;
@@ -200,6 +203,20 @@ test('each refusal of Buy says what happened', async () => {
   await bought.els.body.button('Buy').click();
   assert.match(bought.els.body.textContent, /Owned$/);
   assert.equal(bought.els.thanks.hidden, false);
+});
+
+test('a 409 from Checkout unlocks nothing the server has not reported: api/me is asked again, and only what it says is drawn', async () => {
+  // The kit answers 409 when it holds the entitlement; but what is drawn comes from api/me alone.
+  // One that still reports none (a record deleted meanwhile, a 409 for some other reason) leaves
+  // Buy where it was, and no thank-you.
+  const p = page({ 'GET config': ok(CONFIG), 'GET me': ADA, 'POST checkout': { status: 409, body: { error: 'already_owned' } } });
+  await p.ctl.ready;
+  await p.els.body.button('Buy').click();
+  assert.deepEqual(p.calls.map((c) => `${c.method} ${c.route}`), ['GET config', 'GET me', 'POST checkout', 'GET me'], 'the 409 is answered by asking api/me, not by drawing a purchase');
+  assert.deepEqual(p.els.body.buttons().map((b) => b.textContent), ['Sign out', 'Delete account', 'Buy']);
+  assert.doesNotMatch(p.els.body.textContent, /Owned/);
+  assert.equal(p.els.thanks.hidden, true, 'no thank-you in About');
+  assert.deepEqual(p.seen.assigned, []);
 });
 
 test('a supporter reads the thank-you in About and "Owned" in place of Buy', async () => {
@@ -313,6 +330,21 @@ test('?purchase=success: api/me is asked up to five times over fifteen seconds f
   await cancelled.ctl.ready;
   assert.deepEqual(cancelled.seen.replaced, ['/abientnoiser/']);
   assert.deepEqual(cancelled.seen.notes, [], '?purchase=cancelled: nothing but taking it out of the address');
+});
+
+test('?purchase=success on a site that sells nothing: the flag leaves the address, and nothing is awaited, asked or said', async () => {
+  // Sign-in on and no product (Stripe's variables not set, or this app's product not among the
+  // listed ones): there is no purchase to wait for, so no "Payment received" on a site with no shop.
+  for (const [label, shop] of [['no products', { products: [] }], ['no shop at all', undefined], ['only another app\'s product', { products: [{ ...CONFIG.shop.products[0], id: 'pro' }] }]]) {
+    const p = page({ 'GET config': ok({ auth: { google: true }, ...(shop ? { shop } : {}) }), 'GET me': ADA }, { href: `${BASE}?purchase=success` });
+    assert.equal(await p.ctl.ready, true, label);
+    assert.deepEqual(p.seen.replaced, ['/abientnoiser/'], `${label}: the flag still leaves the address`);
+    assert.deepEqual(p.seen.waits, [], `${label}: no wait`);
+    assert.deepEqual(p.calls.map((c) => `${c.method} ${c.route}`), ['GET config', 'GET me'], `${label}: api/me once, as on any load, and not polled`);
+    assert.deepEqual(p.seen.notes, [], `${label}: no note`);
+    assert.doesNotMatch(p.els.body.textContent, /Support this app|Owned/, `${label}: no shop drawn`);
+    assert.equal(p.els.thanks.hidden, true, `${label}: no thank-you`);
+  }
 });
 
 test('what the server says is read field by field, and what does not hold up is left out', () => {

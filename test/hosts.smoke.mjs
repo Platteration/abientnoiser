@@ -8,6 +8,12 @@
  * whole of deploy/nginx.conf over `http2 on;`, and Apache sent no HSTS behind a proxy that ended
  * TLS, because env=HTTPS is set by mod_ssl alone.
  *
+ * The same goes for the site's API behind them. With server/start.mjs running, /api/ is the API's,
+ * with its own headers; with it stopped, nginx and the Apache virtual host README gives answer
+ * /api/ with the site's not-found page and every header, where they once sent their own error
+ * page with HSTS alone; and nginx with the API's location deleted, as README says to do where the
+ * API does not run, serves the folder's api/config.
+ *
  * Needs nginx, Apache as Debian and Ubuntu lay it out (/usr/sbin/apache2, modules in
  * /usr/lib/apache2/modules), openssl and /etc/mime.types; GitHub's ubuntu-24.04 runner has them
  * all. Where one is missing this says so and passes, unless CI is set: skipped there, it would
@@ -38,6 +44,14 @@ const API_HEADERS = {
   'referrer-policy': 'no-referrer',
   'cross-origin-resource-policy': 'same-origin',
 };
+
+/** The lines README gives for an Apache virtual host that runs the API (```apache): this suite
+ *  runs them as written, but for the port. */
+const APACHE_API = (() => {
+  const block = fs.readFileSync(path.join(root, 'README.md'), 'utf8').match(/^( *)```apache\n([\s\S]*?)^\1```$/m);
+  if (!block) throw new Error('README.md gives no ```apache block for the API');
+  return block[2].split('\n').filter((l) => l.trim()).map((l) => l.slice(block[1].length));
+})();
 
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failures++; };
@@ -87,8 +101,8 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 /** One request: status, headers and body. The certificate is this run's own, self-signed. */
-const get = (url, headers = {}) => new Promise((resolve, reject) => {
-  const req = (url.startsWith('https:') ? https : http).get(url, { headers, rejectUnauthorized: false, agent: false }, (res) => {
+const request = (url, { method = 'GET', headers = {} } = {}) => new Promise((resolve, reject) => {
+  const req = (url.startsWith('https:') ? https : http).request(url, { method, headers, rejectUnauthorized: false, agent: false }, (res) => {
     let body = '';
     res.setEncoding('utf8');
     res.on('data', (d) => { body += d; });
@@ -96,7 +110,9 @@ const get = (url, headers = {}) => new Promise((resolve, reject) => {
   });
   req.on('error', reject);
   req.setTimeout(10000, () => req.destroy(new Error(`${url}: no answer in 10 s`)));
+  req.end();
 });
+const get = (url, headers = {}) => request(url, { headers });
 async function waitFor(url, log) {
   for (let i = 0; i < 100; i++) {
     try { return await get(url); } catch { await new Promise((r) => setTimeout(r, 100)); }
@@ -182,8 +198,11 @@ function start(cmd, args, log, env) {
   return () => output + (log && fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '');
 }
 
-async function nginx() {
-  const ndir = path.join(work, 'nginx');
+/** deploy/nginx.conf in the nginx installed here; `withoutApi`: with its API location deleted, as
+ *  README says to do where server/start.mjs does not run. Answers the https origin. */
+async function nginx({ withoutApi = false } = {}) {
+  const label = withoutApi ? 'nginx without the API\'s location' : 'nginx';
+  const ndir = path.join(work, withoutApi ? 'nginx-no-api' : 'nginx');
   fs.mkdirSync(path.join(ndir, 'logs'), { recursive: true });
   const [plain, tls] = [await freePort(), await freePort()];
   // deploy/nginx.conf as the README says to install it: root and the certificate paths set, and
@@ -204,9 +223,10 @@ async function nginx() {
   edit('  root /var/www/ambient-noiser;\n', `  root ${dir};\n`);
   edit('/etc/letsencrypt/live/example.com/fullchain.pem', cert);
   edit('/etc/letsencrypt/live/example.com/privkey.pem', key);
-  edit('proxy_pass http://127.0.0.1:8788;', `proxy_pass http://127.0.0.1:${apiPort};`);
+  if (withoutApi) edit(/^ {2}location \^~ \/api\/ \{\n(?: {4}[^\n]*\n)*? {2}\}\n/m, '');
+  else edit('proxy_pass http://127.0.0.1:8788;', `proxy_pass http://127.0.0.1:${apiPort};`);
   const bad = edits.filter(Boolean);
-  check(bad.length === 0, `deploy/nginx.conf has the lines an install sets${bad.length ? `: ${bad.join(', ')}` : ''}`);
+  check(bad.length === 0, `deploy/nginx.conf has the lines an install sets${withoutApi ? ', and one API location to delete' : ''}${bad.length ? `: ${bad.join(', ')}` : ''}`);
   fs.writeFileSync(path.join(ndir, 'site.conf'), conf);
   // the http {} block a stock Debian or Ubuntu nginx.conf includes it from, less the logging
   fs.writeFileSync(path.join(ndir, 'nginx.conf'), [
@@ -226,16 +246,41 @@ async function nginx() {
   const args = ['-p', ndir, '-e', path.join(ndir, 'logs', 'error.log'), '-c', path.join(ndir, 'nginx.conf')];
   const version = spawnSync(NGINX, ['-v'], { encoding: 'utf8' }).stderr.trim().replace(/^nginx version: /, '');
   const test = spawnSync(NGINX, ['-t', ...args], { encoding: 'utf8' });
-  check(test.status === 0 && !/\[emerg\]/.test(test.stderr), `${version} loads deploy/nginx.conf${test.status === 0 ? '' : `: ${test.stderr.trim()}`}`);
-  if (test.status !== 0) return;
+  check(test.status === 0 && !/\[emerg\]/.test(test.stderr), `${version} loads deploy/nginx.conf${withoutApi ? ' without the API\'s location' : ''}${test.status === 0 ? '' : `: ${test.stderr.trim()}`}`);
+  if (test.status !== 0) return null;
 
-  const log = start(NGINX, [...args, '-g', 'daemon off;'], path.join(ndir, 'logs', 'error.log'));
+  const errorLog = path.join(ndir, 'logs', 'error.log');
+  const log = start(NGINX, [...args, '-g', 'daemon off;'], errorLog);
   const origin = `https://127.0.0.1:${tls}`;
   await waitFor(`${origin}/`, log);
-  await serves('nginx', origin, {}, { api: true });
-  await answersApi('nginx', origin);
+  if (withoutApi) {
+    // every file of the site, api/config included, from the folder; anything else under api/ the
+    // not-found page
+    await serves(label, origin);
+    const errors = fs.readFileSync(errorLog, 'utf8').split('\n').filter((l) => /\[(error|crit|alert|emerg)\]/.test(l));
+    check(errors.length === 0, `${label}: nothing logged as an error${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+    return origin;
+  }
+  await serves(label, origin, {}, { api: true });
+  await answersApi(label, origin);
   const redirect = await get(`http://127.0.0.1:${plain}/a/b?x=1`);
   check(redirect.status === 301 && redirect.headers.location === 'https://127.0.0.1/a/b?x=1', `nginx: plain http answers a 301 to https (${redirect.status} ${redirect.headers.location})`);
+  return origin;
+}
+
+/** What a host that hands /api/ to the API answers there once the API has stopped: `status`, its
+ *  own (nginx's 502, Apache's 503), with the site's not-found page and every header the site's
+ *  pages carry, for each method the page uses, rather than the server's own error page. */
+async function answersApiStopped(label, origin, status) {
+  const wrong = [];
+  for (const [method, p] of [['GET', '/api/config'], ['GET', '/api/me'], ['POST', '/api/checkout'], ['POST', '/api/auth/logout'], ['DELETE', '/api/me']]) {
+    const r = await request(`${origin}${p}`, { method });
+    const bad = wrongHeaders(r, '/404.html');
+    if (r.status !== status || !r.body.includes(NOT_FOUND) || !/^text\/html/.test(r.headers['content-type'] || '') || bad.length) {
+      wrong.push(`${method} ${p} ${r.status} ${r.headers['content-type']} ${r.body.slice(0, 60).replace(/\s+/g, ' ')}${bad.length ? ` (${bad.join('; ')})` : ''}`);
+    }
+  }
+  check(wrong.length === 0, `${label}, the API stopped: /api/ answers ${status} with the site's not-found page and every header the site sends${wrong.length ? `; wrong: ${wrong.join(' | ')}` : ''}`);
 }
 
 async function apache() {
@@ -277,24 +322,22 @@ async function apache() {
     `  SSLCertificateFile ${cert}`,
     `  SSLCertificateKeyFile ${key}`,
     '</VirtualHost>',
-    // The site with its API, as .htaccess says to set it up: .htaccess cannot proxy, so the
-    // virtual host hands /api/ to server/start.mjs, and sends HSTS there itself, since a proxied
-    // answer never reads .htaccess.
+    // The site with its API, as README says to set it up: the virtual host hands /api/ to
+    // server/start.mjs (ProxyPass is server configuration), sends HSTS there itself, since a
+    // proxied answer never reads .htaccess, and answers an API that is not there with the site's
+    // not-found page. README's lines, as written but for the port.
     `<VirtualHost 127.0.0.1:${proxied}>`,
     '  SSLEngine on',
     `  SSLCertificateFile ${cert}`,
     `  SSLCertificateKeyFile ${key}`,
-    `  ProxyPass "/api/" "http://127.0.0.1:${apiPort}/api/"`,
-    '  <Location "/api/">',
-    `    Header always set Strict-Transport-Security "${want('/index.html')['strict-transport-security']}"`,
-    '  </Location>',
+    ...APACHE_API.map((l) => `  ${l.replace('http://127.0.0.1:8788/', `http://127.0.0.1:${apiPort}/`)}`),
     '</VirtualHost>',
     '',
   ].join('\n'));
   const version = spawnSync(APACHE, ['-v'], { encoding: 'utf8' }).stdout.split('\n')[0].replace(/^Server version: /, '');
   const test = spawnSync(APACHE, ['-t', '-f', path.join(adir, 'httpd.conf')], { encoding: 'utf8' });
   check(test.status === 0, `${version} loads its configuration${test.status === 0 ? '' : `: ${test.stderr.trim()}`}`);
-  if (test.status !== 0) return;
+  if (test.status !== 0) return null;
   const log = start(APACHE, ['-f', path.join(adir, 'httpd.conf'), '-DFOREGROUND'], path.join(adir, 'error.log'));
   await waitFor(`https://127.0.0.1:${tls}/`, log);
 
@@ -309,6 +352,7 @@ async function apache() {
   // the stock refusal of .htaccess (AH01630) is logged as an error and is not one
   const errors = log().split('\n').filter((l) => /:(error|crit|alert|emerg)\]/.test(l) && !/AH01630: client denied by server configuration: \S+\/\.htaccess$/.test(l));
   check(errors.length === 0, `Apache logged no error while serving${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+  return `https://127.0.0.1:${proxied}`;
 }
 
 // The API with nothing configured, as a deployment starts it before its variables are set:
@@ -316,10 +360,17 @@ async function apache() {
 const apiPort = await freePort();
 const apiLog = start(process.execPath, [path.join(root, 'server', 'start.mjs')], null,
   { PATH: process.env.PATH, KIT_DATA_DIR: path.join(work, 'api-data'), KIT_HOST: '127.0.0.1', KIT_PORT: String(apiPort) });
+const api = children[children.length - 1];
 try {
   await waitFor(`http://127.0.0.1:${apiPort}/api/config`, apiLog);
-  await nginx();
-  await apache();
+  const nginxOrigin = await nginx();
+  await nginx({ withoutApi: true });
+  const apacheOrigin = await apache();
+  // and then the API stops, as a process does when it crashes or before it was ever started
+  api.kill('SIGTERM');
+  if (api.exitCode === null && api.signalCode === null) await new Promise((r) => api.once('exit', r));
+  if (nginxOrigin) await answersApiStopped('nginx', nginxOrigin, 502);
+  if (apacheOrigin) await answersApiStopped('Apache with the API proxied', apacheOrigin, 503);
 } catch (e) {
   console.error(e);
   failures++;

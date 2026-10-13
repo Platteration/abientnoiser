@@ -127,7 +127,42 @@ test('nginx: /api/ goes to the API on loopback, with HSTS and none of the page\'
   assert.match(api.body, /^\s*proxy_pass http:\/\/127\.0\.0\.1:8788;$/m, 'proxied to server/start.mjs on loopback, the path unchanged');
   assert.deepEqual(nginxApiHeaders(), [`add_header Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}" always;`]);
   assert.match(read('deploy/nginx.conf'), new RegExp(`^ {2}add_header Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}" always;$`, 'm'), 'which is the server block\'s line as written');
-  assert.match(read('.htaccess'), /ProxyPass "\/api\/" "http:\/\/127\.0\.0\.1:8788\/api\/"/, '.htaccess says what Apache needs in the virtual host, since it cannot proxy itself');
+  // What nginx answers there itself, with the API not running (502) or not answering in time
+  // (504), is the site's not-found page: an internal redirect to /404.html, which the allow-list
+  // serves with every header of the server block (test/hosts.smoke.mjs reads them back). nginx's
+  // own page went out with the location's HSTS line alone. There is no proxy_intercept_errors,
+  // so the API's own answers, its errors included, pass through as it sent them.
+  assert.deepEqual(api.body.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')), [
+    'proxy_pass http://127.0.0.1:8788;',
+    'proxy_http_version 1.1;',
+    'proxy_set_header Connection "";',
+    'client_max_body_size 1m;',
+    'proxy_read_timeout 30s;',
+    'error_page 502 504 /404.html;',
+    `add_header Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}" always;`,
+  ], 'the API\'s location, directive for directive');
+  assert.equal(nginxServes('/404.html'), true, 'and the not-found page it falls back on is served from the folder');
+});
+
+// Apache: ProxyPass is server configuration, so the API is set up in the virtual host. README
+// gives the lines (test/hosts.smoke.mjs runs them as written), and .htaccess, the file an owner
+// setting up Apache reads, repeats them.
+test('Apache: the virtual host\'s lines for the API are the same in README and .htaccess, and answer a stopped API with the site\'s not-found page', () => {
+  const block = read('README.md').match(/^( *)```apache\n([\s\S]*?)^\1```$/m);
+  assert.ok(block, 'README gives the virtual host\'s lines as an ```apache block');
+  const lines = block[2].split('\n').filter((l) => l.trim()).map((l) => l.slice(block[1].length));
+  assert.deepEqual(lines, [
+    'ProxyPass "/api/" "http://127.0.0.1:8788/api/"',
+    '<Location "/api/">',
+    `  Header always set Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}"`,
+    '</Location>',
+    'ErrorDocument 502 /404.html',
+    'ErrorDocument 503 /404.html',
+    'ErrorDocument 504 /404.html',
+  ]);
+  const comment = read('.htaccess').split('\n').filter((l) => /^# {3}\S|^# {5}\S/.test(l)).map((l) => l.slice(4));
+  assert.deepEqual(comment, lines, '.htaccess gives the same lines');
+  assert.doesNotMatch(read('.htaccess'), /cannot (be )?prox/, 'and does not say Apache cannot proxy from here: a RewriteRule with [P] can; ProxyPass cannot');
 });
 
 /** What Netlify and Cloudflare Pages send for a path: the headers of every rule in _headers
@@ -344,8 +379,7 @@ test('scripts/site.js writes the site, and the config each host reads, into an e
  *  else the longest prefix, when it carries `^~`; else the first regular expression that
  *  matches; else the longest prefix. True when the folder's file is served, false when it is
  *  refused, and 'proxied' for a location that hands the request to the API instead. */
-function nginxServes(urlPath) {
-  const blocks = nginxServer().locations;
+function nginxServes(urlPath, blocks = nginxServer().locations) {
   const exact = blocks.find((b) => b.kind === '=' && b.match === urlPath);
   const prefix = blocks.filter((b) => (b.kind === 'prefix' || b.kind === '^~') && urlPath.startsWith(b.match)).sort((a, b) => b.match.length - a.match.length)[0];
   const regex = blocks.find((b) => b.kind === '~' && new RegExp(b.match).test(urlPath));
@@ -395,6 +429,14 @@ test('pointed at a checkout, every host config serves the site and answers 404 f
     assert.equal(nginxServes(p), 'proxied', `nginx hands ${p} to the API, which serves no file`);
   }
   assert.equal(nginxServes('/apix'), false, 'and nothing outside /api/');
+  // README says to delete the API's location where server/start.mjs does not run: then the
+  // folder's api/config is served, and nothing else under api/ is.
+  const withoutApi = nginxServer().locations.filter((l) => !(l.kind === '^~' && l.match === '/api/'));
+  assert.equal(nginxServes('/api/config', withoutApi), true, 'without the API\'s location, nginx serves the folder\'s api/config');
+  for (const p of ['/api/me', '/api/', '/api/config.bak', '/api/auth/google/callback', '/api/.git/config']) {
+    assert.equal(nginxServes(p, withoutApi), false, `without the API's location, nginx answers 404 for ${p}`);
+  }
+  for (const f of others) assert.equal(nginxServes(`/${f}`, withoutApi), false, `without the API's location, nginx still answers 404 for /${f}`);
   assert.equal(nginxServes('/'), true, 'nginx serves the page at /');
   assert.equal(apacheServes(''), true, 'Apache serves the page at /');
   for (const dir of ['js/', 'js/audio/', 'css/', '.well-known/']) {

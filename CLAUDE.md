@@ -210,10 +210,15 @@ empty; a change is made there and copied, never here), with this app's catalogue
 - **Where it runs**: `functions/api/[[path]].js` on Cloudflare Pages, which `_routes.json`
   (published by `scripts/site.js --host=cloudflare` alone) limits to `/api/*`; or
   `server/start.mjs` on 127.0.0.1:8788 behind `deploy/nginx.conf`'s `location ^~ /api/` (for
-  Apache, a `ProxyPass` in the virtual host, since `.htaccess` cannot proxy). Its one
+  Apache, the lines README gives in its `apache` block, in the virtual host: `ProxyPass` is server
+  configuration; `.htaccess` repeats them in a comment). Its one
   `add_header` is the server block's HSTS line, as written there: a location that adds a header
   inherits none of the server block's, which is what keeps the page's headers off the API's
-  answers, and `test/website.test.js` allows that one location and no other. Cloudflare's
+  answers, and `test/website.test.js` allows that one location and no other. Its
+  `error_page 502 504 /404.html` (and the virtual host's `ErrorDocument 502|503|504`) answers an
+  API that is not running with the site's not-found page and every header, where nginx's own
+  page went out with HSTS alone; where the API is not run at all, README says to delete the
+  block, and the allow-list then serves the folder's `api/config`. Cloudflare's
   documentation (read from the `cloudflare/cloudflare-docs` sources: `pages/configuration/headers.mdx`,
   `redirects.mdx`, `functions/routing.mdx`) says `_headers` and `_redirects` are not applied to
   what a Function serves, so the kit sends its own headers; a Pages project on the Free plan
@@ -254,8 +259,9 @@ empty; a change is made there and copied, never here), with this app's catalogue
   document; `test/site.smoke.mjs` runs the whole flow in Chromium under the site's policy with
   the kit mounted at `/abientnoiser/api/` (sign in, buy, the signed webhook, the thank-you,
   sign out, sign in again, delete) and a host whose `api/config` is a 404; and
-  `test/hosts.smoke.mjs` puts `server/start.mjs` behind the real nginx and an Apache
-  `ProxyPass`. What the owner sets up is in `server/kit/README.md` and README's "Sign in and
+  `test/hosts.smoke.mjs` puts `server/start.mjs` behind the real nginx and an Apache virtual host
+  set up with README's lines, then stops it and reads both back, and runs nginx with the API's
+  location deleted. What the owner sets up is in `server/kit/README.md` and README's "Sign in and
   Support this app".
 
 ## Tests

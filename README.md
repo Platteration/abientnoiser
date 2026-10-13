@@ -112,7 +112,7 @@ with the same headers in each:
 | Netlify | `node scripts/site.js <folder> --host=netlify` | `_headers`, `_redirects` |
 | Cloudflare Pages | `node scripts/site.js <folder> --host=cloudflare` | `_headers`, and `_routes.json` for the optional API |
 | Apache | `node scripts/site.js <folder> --host=apache` | `.htaccess` |
-| nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand (any nginx from 1.9.5: Debian 12's 1.22 and Ubuntu 24.04's 1.24 load it) |
+| nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand (any nginx from 1.9.5: Debian 12's 1.22 and Ubuntu 24.04's 1.24 load it); delete its `location ^~ /api/` block unless `server/start.mjs` runs (below) |
 | GitHub Pages | the workflow | none: see below |
 
 Serve it over HTTPS only: the Apache and nginx settings redirect plain `http://`, and Netlify,
@@ -204,10 +204,24 @@ plain folder nothing of it runs and the app is exactly as described above.
   applies neither `_headers` nor `_redirects` to what a Function answers, so the kit sends its
   own headers (`server/kit/README.md`, "Hosting"). **Self-hosted**, `node server/start.mjs`
   listens on 127.0.0.1:8788 with its records under `KIT_DATA_DIR` (outside the web root), and
-  `deploy/nginx.conf`'s `location ^~ /api/` hands it the site's `/api/`. Apache cannot proxy from
-  `.htaccess`: in the virtual host, with `mod_proxy` and `mod_proxy_http`,
-  `ProxyPass "/api/" "http://127.0.0.1:8788/api/"`, and the Strict-Transport-Security header
-  for `/api/` there.
+  `deploy/nginx.conf`'s `location ^~ /api/` hands it the site's `/api/`. With that process not
+  running, nginx answers `/api/` 502 (with the site's not-found page and every header) and logs
+  a refused connection for every page view, so where the API is not run, delete that block: the
+  folder's `api/config` then answers that nothing is on. For Apache, `ProxyPass` is server
+  configuration, so the API goes in the virtual host, with `mod_proxy` and `mod_proxy_http`;
+  these lines also send the Strict-Transport-Security header there (a proxied answer never reads
+  `.htaccess`) and answer an API that is not running with the site's not-found page rather than
+  Apache's own (for a site in a sub-folder, put the folder in front of `/404.html`):
+
+  ```apache
+  ProxyPass "/api/" "http://127.0.0.1:8788/api/"
+  <Location "/api/">
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  </Location>
+  ErrorDocument 502 /404.html
+  ErrorDocument 503 /404.html
+  ErrorDocument 504 /404.html
+  ```
 - **What the owner sets up**: a Google OAuth client (Web application) whose redirect URI is the
   site's address followed by `api/auth/google/callback`; in Stripe, a product with a one-time
   Price whose id goes in `STRIPE_PRICE_SUPPORTER`, and a webhook endpoint at the site's address
@@ -256,7 +270,7 @@ npm run test:all          # all of the above
 
 The browser suite renders every style offline and checks levels and onset, that two renders match to within a 16-bit step, that the loop seam and the export's chunk joins are continuous, and that the live transport advances, wraps, seeks and releases its sources. It also covers steering, the movement editor, the focus timer, the queue crossfade, the share card, the visualiser, save/load/share, that the whole working state survives a reload, that the timers keep running with no animation frames at all, that heavy load thins the incidental one-shots without dropping notes, and that a 360px layout has no sideways overflow.
 
-The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home; then, with the API mounted at `/abientnoiser/api/` and a fake Google and Stripe behind it, signing in, buying, Stripe's signed webhook, the thank-you, signing out and in again and deleting the account, through the real service worker, and a host whose `api/config` is a 404. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting, and that it stays quiet when the file that did not load is its own or the stylesheet and the app starts anyway. `test/website.test.js` holds the headers equal in every file that writes them and on every path of the site, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404. The hosts suite (`test/hosts.smoke.mjs`, the last part of `test:e2e`) runs the real thing: `deploy/nginx.conf` in the nginx installed where it runs and the built site's `.htaccess` in the Apache installed there (over https, and behind a proxy that ended TLS), serving the site with a checkout's files planted beside it, and checks every file of the site answers 200 with every header and everything else the not-found page; with `server/start.mjs` behind nginx's `location ^~ /api/` and an Apache `ProxyPass`, it checks `/api/` is the API's, with the API's own headers and HSTS. It says so and passes where nginx or Apache is not installed, unless `CI` is set; GitHub's Ubuntu runner has both.
+The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home; then, with the API mounted at `/abientnoiser/api/` and a fake Google and Stripe behind it, signing in, buying, Stripe's signed webhook, the thank-you, signing out and in again and deleting the account, through the real service worker, and a host whose `api/config` is a 404. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting, and that it stays quiet when the file that did not load is its own or the stylesheet and the app starts anyway. `test/website.test.js` holds the headers equal in every file that writes them and on every path of the site, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404. The hosts suite (`test/hosts.smoke.mjs`, the last part of `test:e2e`) runs the real thing: `deploy/nginx.conf` in the nginx installed where it runs and the built site's `.htaccess` in the Apache installed there (over https, and behind a proxy that ended TLS), serving the site with a checkout's files planted beside it, and checks every file of the site answers 200 with every header and everything else the not-found page; with `server/start.mjs` behind nginx's `location ^~ /api/` and an Apache virtual host set up with the lines above, it checks `/api/` is the API's, with the API's own headers and HSTS, and once the API has stopped, that both answer `/api/` with the site's not-found page and every header; and with that nginx location deleted, that nginx serves the folder's `api/config`. It says so and passes where nginx or Apache is not installed, unless `CI` is set; GitHub's Ubuntu runner has both.
 
 The suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile.
 

@@ -2,11 +2,20 @@
 # Cloudflare Pages read _headers instead; nginx: deploy/nginx.conf. The headers are the same
 # in all three and in the pages' <meta>, and test/website.test.js holds them equal. Publish
 # the folder `node scripts/site.js <folder> --host=apache` writes, not a checkout.
-# The site's API (sign in with Google and "Support this app", server/start.mjs) cannot be proxied
-# from here: mod_proxy is server configuration. In the virtual host, with mod_proxy and
-# mod_proxy_http: ProxyPass "/api/" "http://127.0.0.1:8788/api/", and the Strict-Transport-Security
-# header there, since a proxied answer never reads this file. Without that, the folder's
-# api/config answers that nothing is on, and the page draws no sign-in and no shop.
+# The site's API (sign in with Google and "Support this app", server/start.mjs) is set up in the
+# virtual host, not here: ProxyPass is server configuration. With mod_proxy and mod_proxy_http,
+# these lines (README.md gives the same) hand it /api/, send the Strict-Transport-Security header
+# there, since a proxied answer never reads this file, and answer an API that is not running or
+# not answering with the site's not-found page and its headers rather than Apache's own page:
+#   ProxyPass "/api/" "http://127.0.0.1:8788/api/"
+#   <Location "/api/">
+#     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#   </Location>
+#   ErrorDocument 502 /404.html
+#   ErrorDocument 503 /404.html
+#   ErrorDocument 504 /404.html
+# Without them, the folder's api/config answers that nothing is on, and the page draws no sign-in
+# and no shop.
 
 Options -Indexes
 ServerSignature Off
