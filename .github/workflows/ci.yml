@@ -37,6 +37,8 @@ jobs:
       # Strictly from the lockfile, so CI runs the version these tests were written against.
       - run: npm ci
 
+      - run: npm run typecheck
+
       - run: npm test
 
       - run: npm run test:conventions

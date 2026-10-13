@@ -37,6 +37,7 @@ jobs:
       # This runs on the tree as committed, so test/shell.test.js checks the VERSION
       # the commit carries against the shell's contents before the stamp below.
       - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
       - run: npm run test:all
       # Publish the site's own files out of the commit, and nothing else: not the notes,
       # the tests, the dev server or the hosting configs, which GitHub Pages would serve as

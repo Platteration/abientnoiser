@@ -2,12 +2,19 @@
 
 Read AGENTS.md first. It holds the working rules every coding agent follows in this repository; this file adds the notes specific to this project.
 
-A static, dependency-free web app that generates hour-long looping soundscapes with
-the Web Audio API. No build step, no server, no samples. `npm start` serves it;
-`index.html` loads the scripts in dependency order. It is also a website: the host serves
-the files `scripts/site.js` lists, with the headers in `_headers`, `.htaccess` and
-`deploy/nginx.conf`, and does nothing else — everything the app does still happens in the
-visitor's browser.
+A static web app with no runtime dependencies that generates hour-long looping soundscapes
+with the Web Audio API. No build step and no samples. `npm start` serves it; `index.html`
+loads the scripts in dependency order. It is also a website: the host serves the files
+`scripts/site.js` lists, with the headers in `_headers`, `.htaccess` and `deploy/nginx.conf` —
+everything the app does still happens in the visitor's browser.
+
+There is no server, with one optional exception the owner asked for: a small backend for
+**sign in with Google and a "Support this app" payment through Stripe**, which runs only where
+the host runs functions on the site's own origin (Cloudflare Pages Functions, or
+`server/start.mjs` behind nginx's `location ^~ /api/`) and is off until its variables are set.
+It is `server/kit/` (the shared kit, copied byte for byte), driven by `server/catalogue.js`;
+see "Sign-in and the shop" below. On GitHub Pages and every other static host nothing of it
+runs, and the app looks and behaves as it did before it existed.
 
 ## Layout
 
@@ -26,11 +33,17 @@ visitor's browser.
 | `js/audio/recorder.js` | live recording, chunked WAV export |
 | `js/storage.js` | library, autosave, preferences, share codes |
 | `js/install.js` | `AN.installPrompt` — the header's Install button behind `beforeinstallprompt` (Chromium only; Safari never fires it, so the button starts hidden) |
+| `js/account.js` | `AN.account` — the About dialog's Account section and "Support this app", drawn only where `api/config` says sign-in is on |
 | `js/visual.js`, `js/card.js`, `js/app.js` | visualiser, share image, UI |
 | `scripts/serve.js`, `scripts/hosts.js` | the dev server, and the Host names it answers to (loopback; off loopback also this machine's own names, `.local`, and `ALLOWED_HOST`); it serves the website's files (`scripts/site.js`, with `sw.js`'s shell read again on every request) and nothing else of the checkout, and decides that on the path the filesystem resolves (`servable`), not on the address as written, which on Windows reached `.git` through `\` and `GIT~1` |
 | `scripts/site.js` | the website: `SHELL` plus `EXTRA`, written into a folder, or listed for the Pages deploy |
 | `404.html`, `robots.txt`, `.well-known/security.txt` | the rest of the website |
 | `_headers`, `_redirects`, `.htaccess`, `deploy/nginx.conf` | Netlify/Cloudflare, Netlify, Apache and nginx settings: one set of headers |
+| `server/kit/` | the shared sign-in, shop and webhook kit: copied verbatim, never edited here (`server/kit/README.md`) |
+| `server/catalogue.js`, `server/start.mjs`, `server/package.json` | what the site sells; the API on a host of its own (Node, loopback, behind nginx); `"type": "module"` for both |
+| `functions/api/[[path]].js`, `_routes.json` | the API as a Cloudflare Pages Function, and the routes file that sends it `/api/*` alone |
+| `api/config` | the answer "nothing on", published with the site for a host that runs no API |
+| `tsconfig.json` | type-checks `server/` and `functions/` (`npm run typecheck`) |
 
 ## Invariants worth knowing
 
@@ -131,19 +144,20 @@ unwired, on every load, with no way back from inside the app.
 `HOST=0.0.0.0 npm start` for a phone on plain http). `test/website.test.js` holds them equal:
 change one, change all five. Every source is there because Chromium needed it with the policy
 sent as a header: `connect-src 'self'` is the service worker (with `'none'` it installs and
-caches nothing, with no error on the page); `worker-src blob:` is `AN.ticker` (without it the
-`try` in `timer.js` falls back to `setInterval`, silently, and the timers stall in a background
-tab — `test/site.smoke.mjs` checks the worker exists); the `trusted-types` names are the two
-`createPolicy` calls, one in `timer.js` and one in `app.js`'s `workerURL()`, because under
-Trusted Types `new Worker()` and `serviceWorker.register()` take a TrustedScriptURL, not a
+caches nothing, with no error on the page) and the page's requests to the site's own `api/`
+(with `'none'`, `api/config` is refused and `test/site.smoke.mjs` fails on it); `worker-src
+blob:` is `AN.ticker` (without it the `try` in `timer.js` falls back to `setInterval`,
+silently, and the timers stall in a background tab — `test/site.smoke.mjs` checks the worker
+exists); the `trusted-types` names are the two `createPolicy` calls, one in `timer.js` and
+one in `app.js`'s `workerURL()`, because under Trusted Types `new Worker()` and `serviceWorker.register()` take a TrustedScriptURL, not a
 string; the `style-src` hash is `404.html`'s inline style, so editing that style means pasting
 the new hash the test prints into all five places (and the shell's `VERSION`, since
 `index.html` carries it). Styles go through the style object (`el.style.x = …`), never a
 `style=""` attribute, which the policy refuses.
 
 **The website is `scripts/site.js`'s list and nothing else.** `SHELL` from `sw.js` plus
-`EXTRA` (the worker, `404.html`, `robots.txt`, `security.txt`, `LICENSE`); the Pages deploy
-`git archive`s exactly that list out of the commit, and `test/website.test.js` reads the nginx,
+`EXTRA` (the worker, `404.html`, `robots.txt`, `security.txt`, `LICENSE`, `api/config`); the
+Pages deploy `git archive`s exactly that list out of the commit, and `test/website.test.js` reads the nginx,
 Apache and Netlify rules the way each host does and checks every other repository file answers
 404 (nginx and Apache allow a pattern of the site's paths; `_redirects` lists the repository's
 own top-level entries, so a new one goes there too). `js/guard.js` loads before everything and
@@ -181,15 +195,79 @@ About dialog shows `APP_VERSION` from `js/app.js`, which the contract test pins 
 rather than naming a release. Header controls that toggle carry `aria-pressed`; one with
 no text carries an `aria-label`.
 
+## Sign-in and the shop
+
+The owner asked for every app to be ready for sign in with Google, a shop and webhooks: per-app
+functions on the same origin, Stripe Checkout and its webhook, web first. Here that is
+`server/kit/`, copied verbatim from the shared kit (`diff -r` against the canonical copy is
+empty; a change is made there and copied, never here), with this app's catalogue:
+
+- **What is sold**: one product, `supporter` ("Support this app", one-time), granting the
+  entitlement `supporter`, whose Stripe Price is `STRIPE_PRICE_SUPPORTER`. What it changes is
+  one line in the About dialog, "Thank you for supporting Ambient Noiser.", and nothing in the
+  app. A visitor who edits the page can show themselves that line: it gates nothing, and the
+  server's record of the payment is what a purchase is.
+- **Where it runs**: `functions/api/[[path]].js` on Cloudflare Pages, which `_routes.json`
+  (published by `scripts/site.js --host=cloudflare` alone) limits to `/api/*`; or
+  `server/start.mjs` on 127.0.0.1:8788 behind `deploy/nginx.conf`'s `location ^~ /api/` (for
+  Apache, a `ProxyPass` in the virtual host, since `.htaccess` cannot proxy). Its one
+  `add_header` is the server block's HSTS line, as written there: a location that adds a header
+  inherits none of the server block's, which is what keeps the page's headers off the API's
+  answers, and `test/website.test.js` allows that one location and no other. Cloudflare's
+  documentation (read from the `cloudflare/cloudflare-docs` sources: `pages/configuration/headers.mdx`,
+  `redirects.mdx`, `functions/routing.mdx`) says `_headers` and `_redirects` are not applied to
+  what a Function serves, so the kit sends its own headers; a Pages project on the Free plan
+  that has used its daily Functions allowance and fails open serves static assets in place of
+  the Function, which here is `api/config` saying nothing is on.
+- **Off until keyed**: with no variables, `api/config` answers `{"auth":{"google":false},…}`
+  and every other route is a 404. The site also publishes that same answer as a static file,
+  `api/config`, so on a host with no API (GitHub Pages, Netlify, a folder) the page's one
+  question is answered rather than logged as a 404; `test/api.test.mjs` holds the file equal
+  to what the kit answers.
+- **The page** (`js/account.js`, loaded before `js/app.js`, started at the end of `init()`):
+  asks `api/config` once, relative to the page, and on a 404, a network error, a body that is
+  not the kit's shape or sign-in off draws nothing, stores nothing and asks nothing again.
+  Where sign-in is on, the About dialog swaps its privacy sentence for the exact one and draws
+  an Account section: "Sign in with Google" (a top-level navigation to
+  `api/auth/google/start?return=<this page>`), or "Signed in as …", Sign out and Delete account
+  (confirmed with `window.confirm`); and "Support this app" with Stripe's price and Buy, "Sign
+  in to buy" or "Owned". Buy follows the Checkout address only when it is
+  `https://checkout.stripe.com/…`. Back from Google with `?signin=failed`, or from Stripe with
+  `?purchase=`, the flag leaves the address at once; after `?purchase=success` the page asks
+  `api/me` five times over fifteen seconds for the thank-you. Leaving for Google or Stripe asks
+  first when a recording, a WAV export or an unsaved shared mix would be lost (`leaveFor` in
+  `app.js`); the working mix is saved on the way out, as on any unload. Everything the server
+  says is read field by field and drawn with `createElement` and text. No storage key is
+  added: the account is held in memory and in the API's `__Host-` cookie.
+- **The service worker** answers nothing under `api/` and caches nothing of it, a navigation
+  included (`API` in `sw.js`): the sign-in start and Google's redirect back to the callback are
+  navigations in its scope, and answered with the cached page, as every other navigation is
+  offline, the callback would never reach the API. `test/shell.test.js` drives the handler
+  for it, and the browser suite runs the sign-in through a real worker.
+- **The policy does not change**: `connect-src 'self'` was already there, and Google and
+  Stripe are top-level navigations, which the policy does not govern. Nothing of Google's or
+  Stripe's is loaded.
+- **Tests**: the kit's self-test (`server/kit/selftest.mjs`) runs in `npm test`;
+  `test/api.test.mjs` drives the catalogue through both entry points with the fakes of
+  `test/api-fakes.mjs` injected through the kit's `fetch` (never a variable that points the kit
+  at another host); `test/account.test.js` drives `js/account.js` against a fake fetch and
+  document; `test/site.smoke.mjs` runs the whole flow in Chromium under the site's policy with
+  the kit mounted at `/abientnoiser/api/` (sign in, buy, the signed webhook, the thank-you,
+  sign out, sign in again, delete) and a host whose `api/config` is a 404; and
+  `test/hosts.smoke.mjs` puts `server/start.mjs` behind the real nginx and an Apache
+  `ProxyPass`. What the owner sets up is in `server/kit/README.md` and README's "Sign in and
+  Support this app".
+
 ## Tests
 
 ```bash
-npm test               # node --test: PRNG, theory, composer, styles, app shell, website, dev server
+npm run typecheck      # tsc over server/ and functions/: the kit and this app's API entry points
+npm test               # node --test: PRNG, theory, composer, styles, app shell, website, dev server, account, API, and the kit's self-test
 npm run test:musical   # every style's whole loop checked for wrong notes and wrong timing
 npm run test:textures  # each texture checked against the sound it claims to be
 npm run test:e2e       # Playwright + Chromium, end to end: the app, then the built website; then nginx and Apache
 npm run test:conventions  # the repository's shape against CONVENTIONS.md
-npm run check          # npm test + test:conventions: the gate before a push
+npm run check          # typecheck + npm test + test:conventions: the gate before a push
 npm run test:all
 ```
 
@@ -236,8 +314,11 @@ The browser suite spawns the dev server on a random port and waits for it to ans
 It asserts against measured behaviour (levels, source counts, render times), so widen
 a bound only when you have measured that the old one was wrong.
 
-Playwright is the only dependency and only for tests; the lockfile pins the version
-these suites were written against, and CI installs with `npm ci`.
+Playwright, TypeScript and `@types/node` are the only dependencies, all of them for
+development: Playwright for the browser suites, TypeScript for `npm run typecheck`, which the
+conventions test requires once the kit's `.d.ts` files are in the tree (the kit passes this
+repository's strict `tsconfig.json` unchanged). The site ships none of them; the lockfile pins
+the versions, and CI installs with `npm ci`.
 
 ## Things deliberately not done
 
@@ -248,8 +329,9 @@ these suites were written against, and CI installs with `npm ci`.
   count, at the cost of changing how the ambience sounds.
 - **Bit-exact renders.** Two renders of the same settings differ by far less than a
   16-bit step; Chromium's own float mixing is not reproducible run to run.
-- **Payments.** Any paid tier needs a backend and business decisions; nothing here
-  assumes one.
+- **Payments beyond one "Support this app".** The owner asked for sign-in and a shop
+  through an optional backend that runs only where the host runs functions (see "Sign-in
+  and the shop"). It sells one thing, which changes nothing in the app; no feature is paid.
 
 ## Conventions
 

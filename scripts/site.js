@@ -17,21 +17,25 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 
 /** Beside the shell: the worker itself, the not-found page every host answers a missing
- *  address with, robots.txt, the security contact (RFC 9116) and the licence the scripts are
- *  published under. */
-const EXTRA = ['sw.js', '404.html', 'robots.txt', '.well-known/security.txt', 'LICENSE'];
+ *  address with, robots.txt, the security contact (RFC 9116), the licence the scripts are
+ *  published under, and api/config: the answer "no sign-in, no shop" (js/account.js) on a host
+ *  that runs no API, so the page's one question there is answered rather than logged as a 404.
+ *  Where the API runs (Cloudflare Pages' function, nginx's proxy) it answers that address
+ *  itself, and the file is never served. */
+const EXTRA = ['sw.js', '404.html', 'robots.txt', '.well-known/security.txt', 'LICENSE', 'api/config'];
 
 /** The config each header-capable host reads from the folder it publishes. GitHub Pages reads
  *  none and would serve them as files, and nginx's lives in the server's own config, so those
  *  two get the site alone. Netlify reads _headers and _redirects (whose rules also answer 404
  *  for both); Cloudflare Pages reads _headers but takes no 404 rule from _redirects, so there
- *  the folder holding nothing else is the protection; Apache refuses to serve .htaccess in its
- *  default configuration. */
+ *  the folder holding nothing else is the protection, and _routes.json, which sends /api/* and
+ *  nothing else to the API's function (functions/api/[[path]].js), so no static file invokes
+ *  it; Apache refuses to serve .htaccess in its default configuration. */
 const HOST_FILES = {
   pages: [],
   nginx: [],
   netlify: ['_headers', '_redirects'],
-  cloudflare: ['_headers'],
+  cloudflare: ['_headers', '_routes.json'],
   apache: ['.htaccess'],
 };
 

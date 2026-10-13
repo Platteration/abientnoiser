@@ -13,6 +13,7 @@
 /.htaccess          /404.html  404!
 /_headers           /404.html  404!
 /_redirects         /404.html  404!
+/_routes.json       /404.html  404!
 /AGENTS.md          /404.html  404!
 /CLAUDE.md          /404.html  404!
 /CONVENTIONS.md     /404.html  404!
@@ -22,7 +23,10 @@
 /SECURITY-AUDIT.md  /404.html  404!
 /package.json       /404.html  404!
 /package-lock.json  /404.html  404!
+/tsconfig.json      /404.html  404!
 /deploy/*           /404.html  404!
+/functions/*        /404.html  404!
+/server/*           /404.html  404!
 /scripts/*          /404.html  404!
 /test/*             /404.html  404!
 /node_modules/*     /404.html  404!

@@ -2,6 +2,11 @@
 # Cloudflare Pages read _headers instead; nginx: deploy/nginx.conf. The headers are the same
 # in all three and in the pages' <meta>, and test/website.test.js holds them equal. Publish
 # the folder `node scripts/site.js <folder> --host=apache` writes, not a checkout.
+# The site's API (sign in with Google and "Support this app", server/start.mjs) cannot be proxied
+# from here: mod_proxy is server configuration. In the virtual host, with mod_proxy and
+# mod_proxy_http: ProxyPass "/api/" "http://127.0.0.1:8788/api/", and the Strict-Transport-Security
+# header there, since a proxied answer never reads this file. Without that, the folder's
+# api/config answers that nothing is on, and the page draws no sign-in and no shop.
 
 Options -Indexes
 ServerSignature Off
@@ -31,7 +36,7 @@ ErrorDocument 403 /404.html
   # The site's own files and nothing else. The repository's notes, tests, scripts and
   # configs, .git and node_modules all answer 404, so a server pointed at a checkout by
   # mistake still publishes only the site; a folder answers 404 rather than a listing.
-  RewriteRule !^(index\.html|404\.html|sw\.js|manifest\.webmanifest|(icon|favicon)\.svg|robots\.txt|LICENSE|\.well-known/security\.txt|css/[a-z]+\.css|js/(audio/)?[a-z]+\.js)?$ - [R=404,L]
+  RewriteRule !^(index\.html|404\.html|sw\.js|manifest\.webmanifest|(icon|favicon)\.svg|robots\.txt|LICENSE|\.well-known/security\.txt|api/config|css/[a-z]+\.css|js/(audio/)?[a-z]+\.js)?$ - [R=404,L]
 </IfModule>
 
 <IfModule mod_headers.c>

@@ -175,7 +175,7 @@ function loadWorker({ cached = {}, openFails = false, network = true } = {}) {
   const handlers = {};
   const self = {
     addEventListener: (type, fn) => { handlers[type] = fn; },
-    location: { origin: 'https://example.test' },
+    location: { origin: 'https://example.test', href: `${base}sw.js` },
     clients: { claim: () => Promise.resolve() },
     skipWaiting: () => Promise.resolve(),
   };
@@ -190,7 +190,22 @@ function loadWorker({ cached = {}, openFails = false, network = true } = {}) {
     });
     return Promise.resolve(answer);
   };
-  return { respond, opened };
+  /** Whether the worker takes the request at all (calls respondWith), and what it then wrote to
+   *  this app's cache once everything it started has settled. */
+  const intercepts = async (url, mode) => {
+    let taken = false;
+    const pending = [];
+    handlers.fetch({
+      request: { url: new URL(url, base).href, method: 'GET', mode: mode || 'same-origin' },
+      respondWith: (p) => { taken = true; pending.push(Promise.resolve(p).catch(() => {})); },
+      waitUntil: (p) => { pending.push(Promise.resolve(p).catch(() => {})); },
+    });
+    await Promise.all(pending);
+    await new Promise((r) => setTimeout(r, 0));
+    return taken;
+  };
+  const stored = () => [...storeFor(version).keys()];
+  return { respond, intercepts, stored, opened };
 }
 
 // caches.match() is a read that resolves undefined when there is nothing to find;
@@ -229,4 +244,37 @@ test('offline, only a navigation falls back to the cached document', async () =>
   for (const url of ['./card-data.json', './js/not-in-shell.js', './icon-2.svg']) {
     await assert.rejects(offline.respond(url), TypeError, `${url} is a network error, not the document`);
   }
+});
+
+// The site's API (server/kit, where the host runs it) lives under api/ beside the worker. A
+// cache-first worker must never answer it or keep a copy: api/me cached once would show a
+// signed-out visitor as signed in, and a purchase as missing, for as long as the copy lasted. And
+// the sign-in start and Google's redirect back to the callback are navigations in this scope:
+// answered offline with the cached page, as every other navigation is, the callback would never
+// reach the API and the sign-in would vanish. So the worker does not take any of them.
+test('nothing under api/ is answered or cached by the worker, navigations included', async () => {
+  for (const network of [true, false]) {
+    const w = loadWorker({ cached: { './index.html': 'CACHED DOC', './js/app.js': 'CACHED APP', './api/config': 'CACHED CONFIG' }, network });
+    for (const [url, mode] of [
+      ['./api/config'], ['./api/me'], ['./api/config?x=1'],
+      ['./api/auth/google/start?return=%2Fapp%2F', 'navigate'],
+      ['./api/auth/google/callback?code=c1&state=s1', 'navigate'],
+      ['./api/', 'navigate'],
+    ]) {
+      assert.equal(await w.intercepts(url, mode), false, `${network ? 'online' : 'offline'}: the worker leaves ${url}${mode ? ` (${mode})` : ''} to the browser`);
+    }
+    assert.deepEqual(w.stored().filter((k) => k.includes('/api/') && k !== 'https://example.test/app/api/config'), [], 'and writes nothing of the API to its cache');
+    // The boundary is the folder api/ beside the worker, not any path that starts with "api".
+    assert.equal(await w.intercepts('./apis/config'), true, 'a path that only starts with "api" is still the worker\'s');
+    assert.equal(await w.intercepts('./js/app.js'), true, 'and so is the shell');
+    assert.equal(await w.intercepts('./?mix=abc', 'navigate'), true, 'and the page');
+  }
+  // Online, every other GET the worker takes is written back to its cache: the same request
+  // under api/ is not.
+  const online = loadWorker({ cached: { './index.html': 'CACHED DOC' } });
+  await online.intercepts('./js/later.js');
+  await online.intercepts('./api/me');
+  const keys = online.stored();
+  assert.ok(keys.includes('https://example.test/app/js/later.js'), `a script fetched online is cached (${keys.join(', ')})`);
+  assert.ok(!keys.includes('https://example.test/app/api/me'), 'api/me is never cached');
 });

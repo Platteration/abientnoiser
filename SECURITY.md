@@ -36,6 +36,17 @@ the others. A deployed site's `/.well-known/security.txt` points to this page as
 `main`, the branch the Pages deploy publishes, and lists the two ways in above, in that order;
 its `Expires` date is renewed every year.
 
+Where a host runs the site's optional API (sign in with Google and the "Support this app"
+payment: `server/kit/` with `server/catalogue.js`, by `functions/api/[[path]].js` on Cloudflare
+Pages or `server/start.mjs` behind nginx), that is in scope too: a way to sign in as someone else
+or keep a session past sign-out, a grant without Stripe's signed webhook, a request another site
+can make on a signed-in visitor's behalf, an address outside the site the sign-in can be sent
+to, and anything the API keeps or reveals beyond the account id, the email address while signed
+in, what was bought and Stripe's customer id. `server/kit/` is a copy of a kit shared with the
+owner's other apps; a report about it is welcome here. The "thank you" line a supporter sees is
+drawn in the visitor's own browser and gates nothing, so showing it without paying is not a
+finding.
+
 Out of scope: vulnerabilities in third-party dependencies that are already
 public and have an upstream fix, findings that require an attacker to already
 control the device or account (which, per the paragraph above, writing this

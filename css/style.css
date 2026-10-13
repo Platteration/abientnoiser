@@ -198,6 +198,12 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 1.25rem 2.5rem; color: va
 .about .version { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.8rem; font-variant-numeric: tabular-nums; }
 .about a { color: var(--accent); }
 .about .close { margin-top: 0.9rem; }
+.about .thanks { font-weight: 600; }
+/* the Account section, drawn only where the site runs its API (js/account.js) */
+.about .account { border-top: 1px solid var(--line); margin-top: 0.9rem; padding-top: 0.1rem; }
+.about h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 0.9rem 0 0.5rem; }
+.about .product { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 0.55rem 0.75rem; margin-top: 0.7rem; }
+.about .owned { font-weight: 600; }
 
 /* quiet mode */
 .quiet-exit { display: none; }

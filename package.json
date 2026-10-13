@@ -5,13 +5,14 @@
   "private": true,
   "scripts": {
     "start": "node scripts/serve.js",
-    "test": "node --test test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.js test/*.test.mjs server/kit/selftest.mjs",
     "test:e2e": "node test/browser.smoke.mjs && node test/site.smoke.mjs && node test/hosts.smoke.mjs",
     "test:browser": "npm run test:e2e",
     "test:musical": "node test/musical.smoke.mjs",
     "test:textures": "node test/texture.smoke.mjs",
     "test:conventions": "node --test test/conventions.mjs",
-    "check": "npm test && npm run test:conventions",
+    "check": "npm run typecheck && npm test && npm run test:conventions",
     "test:all": "npm test && npm run test:musical && npm run test:textures && npm run test:conventions && npm run test:e2e"
   },
   "license": "MIT",
@@ -19,6 +20,8 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "playwright": "^1.56.1"
+    "@types/node": "^22.20.5",
+    "playwright": "^1.56.1",
+    "typescript": "~6.0.3"
   }
 }

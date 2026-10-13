@@ -50,17 +50,41 @@ function apacheRules() {
 }
 const apacheHeaders = () => apacheRules().headers;
 
-/** Every `add_header` in deploy/nginx.conf, as { Header: value }. Each must carry `always`, or
- *  nginx leaves it off the 404 page and every other error response. */
+/** deploy/nginx.conf's https server block, as its own lines (`server`) and its locations, each
+ *  { kind, match, body }: nginx reads it that way, and a header is the server block's only where
+ *  a location sets none of its own. */
+function nginxServer() {
+  const conf = read('deploy/nginx.conf');
+  const server = conf.slice(conf.indexOf('listen 443'));
+  const LOCATION = /location\s+(=|~|\^~)?\s*(\S+)\s*\{([^}]*(?:\{[^}]*\}[^}]*)?)\}/g;
+  const locations = [...server.matchAll(LOCATION)].map((m) => ({ kind: m[1] || 'prefix', match: m[2], body: m[3] }));
+  return { own: server.replace(LOCATION, ''), locations };
+}
+
+/** Every `add_header` of deploy/nginx.conf's https server block, as { Header: value }. Each must
+ *  carry `always`, or nginx leaves it off the 404 page and every other error response. */
 function nginxHeaders() {
   const conf = read('deploy/nginx.conf');
+  const { own } = nginxServer();
   const out = {};
-  for (const m of conf.matchAll(/^\s*add_header\s+([A-Za-z-]+)\s+"([^"]*)"\s+always;\s*$/gm)) {
+  for (const m of own.matchAll(/^\s*add_header\s+([A-Za-z-]+)\s+"([^"]*)"\s+always;\s*$/gm)) {
     assert.ok(!Object.hasOwn(out, m[1]), `nginx.conf: ${m[1]} is set once`);
     out[m[1]] = m[2];
   }
-  assert.equal([...conf.matchAll(/^\s*add_header\b/gm)].length, Object.keys(out).length, 'nginx.conf: every add_header is quoted and `always`');
+  // One add_header in a location drops every header of the server block there. The API's
+  // location is the one that does, on purpose (the kit sends its own headers), and it may repeat
+  // the server block's HSTS line as written and nothing else; any other location adds none.
+  const elsewhere = nginxServer().locations.filter((l) => !(l.kind === '^~' && l.match === '/api/'));
+  assert.deepEqual(elsewhere.filter((l) => /\badd_header\b/.test(l.body)).map((l) => `${l.kind} ${l.match}`), [], 'nginx.conf: no location but the API\'s adds a header');
+  assert.equal([...conf.matchAll(/^\s*add_header\b/gm)].length, Object.keys(out).length + nginxApiHeaders().length, 'nginx.conf: every add_header is quoted and `always`, at server level or the API\'s');
   return out;
+}
+
+/** The add_header lines of nginx.conf's `location ^~ /api/`, as written. */
+function nginxApiHeaders() {
+  const api = nginxServer().locations.filter((l) => l.kind === '^~' && l.match === '/api/');
+  assert.equal(api.length, 1, 'nginx.conf has one `location ^~ /api/`, the site\'s API');
+  return api[0].body.split('\n').map((l) => l.trim()).filter((l) => /^add_header\b/.test(l));
 }
 
 /** A page's <meta> policy and referrer policy. */
@@ -88,6 +112,22 @@ test('one policy: _headers, .htaccess and nginx.conf send the same headers with 
   assert.ok(HEADERS, '_headers has a /* rule');
   assert.deepEqual(apacheHeaders(), HEADERS, '.htaccess sends exactly what _headers does');
   assert.deepEqual(nginxHeaders(), HEADERS, 'deploy/nginx.conf sends exactly what _headers does');
+});
+
+// The site's API (server/kit, by server/start.mjs) answers under /api/ with headers of its own:
+// a JSON API's policy, not the page's. nginx gives a location the server block's add_header
+// lines only when it declares none of its own, and inherited they would go out beside the
+// kit's (a browser reads the last of two Referrer-Policy values, the page's over the API's, on
+// the redirect to Google too). So the location declares one, the server block's HSTS line as
+// written there, and nothing else; proxy_pass carries no URI, so the path reaches the API as
+// the browser sent it.
+test('nginx: /api/ goes to the API on loopback, with HSTS and none of the page\'s headers', () => {
+  const [api] = nginxServer().locations.filter((l) => l.kind === '^~' && l.match === '/api/');
+  assert.ok(api, 'a `location ^~ /api/`, which wins over the allow-list\'s regular expression');
+  assert.match(api.body, /^\s*proxy_pass http:\/\/127\.0\.0\.1:8788;$/m, 'proxied to server/start.mjs on loopback, the path unchanged');
+  assert.deepEqual(nginxApiHeaders(), [`add_header Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}" always;`]);
+  assert.match(read('deploy/nginx.conf'), new RegExp(`^ {2}add_header Strict-Transport-Security "${HEADERS['Strict-Transport-Security']}" always;$`, 'm'), 'which is the server block\'s line as written');
+  assert.match(read('.htaccess'), /ProxyPass "\/api\/" "http:\/\/127\.0\.0\.1:8788\/api\/"/, '.htaccess says what Apache needs in the virtual host, since it cannot proxy itself');
 });
 
 /** What Netlify and Cloudflare Pages send for a path: the headers of every rule in _headers
@@ -256,8 +296,9 @@ test('the site is the shell, the worker and the files every site has, and nothin
   for (const f of ['index.html', '404.html', 'sw.js', 'manifest.webmanifest', 'robots.txt', '.well-known/security.txt', 'js/guard.js']) {
     assert.ok(files.includes(f), `the site has ${f}`);
   }
-  const NOT_SITE = /(^|\/)(README|CLAUDE|AGENTS|CONVENTIONS|REVIEW|SECURITY|SECURITY-AUDIT)\.md$|^(test|scripts|deploy|node_modules|\.github|\.claude)\/|^(_headers|_redirects|\.htaccess|package(-lock)?\.json)$/;
-  assert.deepEqual(files.filter((f) => NOT_SITE.test(f)), [], 'no notes, tests, scripts or hosting configs');
+  const NOT_SITE = /(^|\/)(README|CLAUDE|AGENTS|CONVENTIONS|REVIEW|SECURITY|SECURITY-AUDIT)\.md$|^(test|scripts|deploy|server|functions|node_modules|\.github|\.claude)\/|^(_headers|_redirects|_routes\.json|\.htaccess|tsconfig\.json|package(-lock)?\.json)$/;
+  assert.deepEqual(files.filter((f) => NOT_SITE.test(f)), [], 'no notes, tests, scripts, hosting configs or the API\'s code');
+  assert.deepEqual(files.filter((f) => f.startsWith('api/')), ['api/config'], 'of the API, the site publishes only api/config, the answer "nothing on" for a host that runs no API');
   assert.deepEqual(files.filter((f) => f.split('/').some((part) => part.startsWith('.')) && f !== '.well-known/security.txt'), [], 'no dotfile but the security contact');
   const pages = read('.github/workflows/pages.yml');
   assert.match(pages, /^\s+- run: mkdir dist && git archive HEAD -- \$\(node scripts\/site\.js --list\) \| tar -x -C dist$/m, 'the Pages deploy archives exactly the site\'s files out of the commit');
@@ -288,21 +329,29 @@ test('scripts/site.js writes the site, and the config each host reads, into an e
       assert.throws(() => site.build(out, { host }), /not empty/, 'a folder already holding files is refused, not published along with the site');
     }
     assert.throws(() => site.build(path.join(tmp, 'x'), { host: 'constructor' }), /unknown host/);
+    // Pinned as literals: Cloudflare Pages runs functions/api/[[path]].js for every request
+    // unless _routes.json in the folder it publishes says otherwise, so that host's folder
+    // carries it; no other host reads it, and on those it would be one more file to serve.
+    assert.deepEqual(site.HOST_FILES, {
+      pages: [], nginx: [], netlify: ['_headers', '_redirects'], cloudflare: ['_headers', '_routes.json'], apache: ['.htaccess'],
+    });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-/** Which paths each host config serves, read the way that host reads it. */
+/** Which paths each host config serves, read the way that host reads it. nginx: an exact match;
+ *  else the longest prefix, when it carries `^~`; else the first regular expression that
+ *  matches; else the longest prefix. True when the folder's file is served, false when it is
+ *  refused, and 'proxied' for a location that hands the request to the API instead. */
 function nginxServes(urlPath) {
-  const conf = read('deploy/nginx.conf');
-  const server = conf.slice(conf.indexOf('listen 443'));
-  const blocks = [...server.matchAll(/location\s+(=|~)?\s*(\S+)\s*\{([^}]*(?:\{[^}]*\}[^}]*)?)\}/g)].map((m) => ({ kind: m[1] || 'prefix', match: m[2], body: m[3] }));
+  const blocks = nginxServer().locations;
   const exact = blocks.find((b) => b.kind === '=' && b.match === urlPath);
+  const prefix = blocks.filter((b) => (b.kind === 'prefix' || b.kind === '^~') && urlPath.startsWith(b.match)).sort((a, b) => b.match.length - a.match.length)[0];
   const regex = blocks.find((b) => b.kind === '~' && new RegExp(b.match).test(urlPath));
-  const prefix = blocks.filter((b) => b.kind === 'prefix' && urlPath.startsWith(b.match)).sort((a, b) => b.match.length - a.match.length)[0];
-  const block = exact || regex || prefix;
+  const block = exact || (prefix && prefix.kind === '^~' ? prefix : regex || prefix);
   assert.ok(block, `nginx.conf has a location for ${urlPath}`);
+  if (/\bproxy_pass\b/.test(block.body)) return 'proxied';
   return !/\breturn\s+404\b/.test(block.body);
 }
 function apacheServes(relPath) {
@@ -336,10 +385,16 @@ test('pointed at a checkout, every host config serves the site and answers 404 f
     assert.equal(apacheServes(f), false, `Apache answers 404 for /${f}`);
   }
   for (const f of files) {
-    assert.equal(nginxServes(`/${f}`), true, `nginx serves /${f}`);
+    // nginx hands api/ to the API (server/start.mjs), which answers api/config itself: the file
+    // is for the hosts that run no API.
+    assert.equal(nginxServes(`/${f}`), f.startsWith('api/') ? 'proxied' : true, `nginx serves /${f}`);
     assert.equal(apacheServes(f), true, `Apache serves /${f}`);
     assert.equal(netlifyDenies(`/${f}`), false, `Netlify serves /${f}`);
   }
+  for (const p of ['/api/me', '/api/auth/google/callback', '/api/.git/config']) {
+    assert.equal(nginxServes(p), 'proxied', `nginx hands ${p} to the API, which serves no file`);
+  }
+  assert.equal(nginxServes('/apix'), false, 'and nothing outside /api/');
   assert.equal(nginxServes('/'), true, 'nginx serves the page at /');
   assert.equal(apacheServes(''), true, 'Apache serves the page at /');
   for (const dir of ['js/', 'js/audio/', 'css/', '.well-known/']) {

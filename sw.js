@@ -13,16 +13,24 @@
    there to prevent. The deploy re-stamps the line below with the commit sha, so keep
    the prefix inside the literal rather than composing it. */
 const PREFIX = 'ambient-noiser-';
-const VERSION = 'ambient-noiser-9436a5991702';
+const VERSION = 'ambient-noiser-2142e6caf1ed';
 const SHELL = [
   './', './index.html', './css/style.css', './icon.svg', './favicon.svg', './manifest.webmanifest',
-  './js/guard.js', './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/install.js', './js/app.js',
+  './js/guard.js', './js/prng.js', './js/timer.js', './js/theory.js', './js/composer.js', './js/storage.js', './js/visual.js', './js/card.js', './js/install.js', './js/account.js', './js/app.js',
   './js/audio/graph.js', './js/audio/synths.js', './js/audio/drums.js', './js/audio/ambience.js',
   './js/audio/engine.js', './js/audio/recorder.js',
 ];
 
 /** The one document URL: every navigation, whatever its query string, is this page. */
 const DOC = './';
+
+/** The site's API (sign in with Google and the shop, where the host runs server/kit), beside
+    this file. Nothing under it is answered from the cache or written to it, and that holds for
+    a navigation too: the sign-in start and Google's redirect back to the callback are
+    navigations in this worker's scope, and answering one with the cached page (as every other
+    navigation is answered offline) would swallow the sign-in. Left to the browser, an API
+    request behaves exactly as it would with no worker. */
+const API = new URL('./api/', self.location.href).href;
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -59,6 +67,7 @@ function revalidate(req, key) {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  if (req.url.startsWith(API)) return;
   // Share links arrive as './?mix=...'; they are the same document, so ignore the
   // query when matching and never store a second copy per link.
   const navigate = req.mode === 'navigate';

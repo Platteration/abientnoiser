@@ -98,6 +98,7 @@
     if (prefs.quiet) setQuiet(true);
     if (!AN.Recorder.supported()) { $('record').disabled = true; $('recStatus').textContent = 'Recording not supported in this browser'; }
     if (state.fromShare) toast('Playing a shared mix — save it to keep it');
+    startAccount();
     requestAnimationFrame(tickUI);
     state.logic = AN.ticker(500, tickLogic);
     // The safety net (js/guard.js) stands down: from here the app reports its own failures.
@@ -313,6 +314,43 @@
         sw.addEventListener('statechange', () => { if (sw.state === 'installed') announce(); });
       });
     }).catch(() => { /* offline support is optional */ });
+  }
+
+  // ---------- account ----------
+  /** Sign in with Google and "Support this app", where the site runs its API (js/account.js).
+   *  On every other host the page's one question, api/config, is answered "nothing on" or not
+   *  at all, and nothing is drawn. The app starts without it: when js/account.js is the file that
+   *  did not load, the safety net's note says so and the rest of the page still runs. */
+  function startAccount() {
+    if (!AN.account) return;
+    state.account = AN.account.start({
+      doc: document,
+      fetch: (input, init) => fetch(input, init),
+      location,
+      history,
+      confirm: (message) => confirm(message),
+      note: toast,
+      leave: leaveFor,
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      els: {
+        section: $('account'), body: $('accountBody'), thanks: $('supporterThanks'),
+        privacyLocal: $('privacyLocal'), privacyAccount: $('privacyAccount'),
+      },
+    });
+  }
+
+  /** Signing in and paying leave the page for Google or Stripe. The working mix is kept on the
+   *  way out (beforeunload), as it is whenever the page closes; what would be lost is asked about
+   *  first: a recording or a WAV export still running, and a shared mix that is only playing,
+   *  which is not saved until the visitor changes or saves it. */
+  function leaveFor(where) {
+    const lost = [];
+    if (state.recorder && state.recorder.recording) lost.push('The recording that is running will be lost.');
+    if (state.wavBusy) lost.push('The WAV export that is running will stop.');
+    if (state.fromShare) lost.push('The shared mix you are playing is not saved: Save keeps it.');
+    if (!lost.length) return true;
+    const going = where === 'checkout' ? 'Paying leaves this page for Stripe.' : 'Signing in leaves this page for Google.';
+    return confirm(`${going} ${lost.join(' ')} Leave anyway?`);
   }
 
   // ---------- quiet mode ----------
@@ -998,12 +1036,12 @@
   }
 
   let toastTimer = null;
-  function toast(msg) {
+  function toast(msg, ms = 2600) {
     const el = $('toast');
     el.textContent = msg;
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+    toastTimer = setTimeout(() => { el.hidden = true; }, ms);
   }
 
   function bind() {

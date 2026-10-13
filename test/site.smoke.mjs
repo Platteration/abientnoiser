@@ -13,6 +13,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import catalogue from '../server/catalogue.js';
+import { createNodeHandler } from '../server/kit/node.js';
+import { createMemoryStore } from '../server/kit/store.js';
+import { createFakes, envFor, signedDelivery } from './api-fakes.mjs';
+
 const require = createRequire(import.meta.url);
 const site = require('../scripts/site.js');
 let chromium;
@@ -62,6 +67,12 @@ site.build(dir, { host: 'pages' });
 const served = [];      // every path the server was asked for, the service worker's included
 const outside = [];     // and the ones that were not the site's
 let offline = false;
+/** What answers under api/: 'site', the folder's static api/config ("nothing on", as on GitHub
+ *  Pages); 'missing', the not-found page, as on a host whose folder has no such file; 'kit', the
+ *  site's API itself (server/kit with server/catalogue.js), as Cloudflare Pages' function or
+ *  nginx's proxy answers it, with a fake Google and a fake Stripe injected through its fetch. */
+let apiMode = 'site';
+let kit = null;
 const server = http.createServer((req, res) => {
   if (offline) { req.socket.destroy(); return; }
   const url = new URL(req.url, 'http://x');
@@ -70,6 +81,12 @@ const server = http.createServer((req, res) => {
     outside.push(url.pathname);
     res.writeHead(404);
     res.end();
+    return;
+  }
+  if (url.pathname.startsWith(`${BASE}api/`) && apiMode !== 'site') {
+    if (apiMode === 'kit') { kit(req, res); return; }
+    res.writeHead(404, { 'Content-Type': TYPES['.html'], ...headersFor(url.pathname.slice(BASE.length - 1)) });
+    res.end(fs.readFileSync(path.join(dir, '404.html')));
     return;
   }
   let rel;
@@ -91,6 +108,11 @@ server.on('connection', (s) => { if (offline) s.destroy(); });
 await new Promise((r) => server.listen(0, 'localhost', r));
 const origin = `http://localhost:${server.address().port}`;
 const home = `${origin}${BASE}`;
+// The API at the site's own address, the way a deployment configures it (APP_URL is the site's
+// public address; http is allowed for localhost alone, where browsers keep Secure cookies).
+const fakes = await createFakes();
+const kitLog = [];
+kit = createNodeHandler({ catalogue, env: envFor(home), store: createMemoryStore(), fetch: fakes.fetch, log: (level, message) => kitLog.push(`${level}: ${message}`) });
 
 // a page of another origin, to frame the app from
 const framer = http.createServer((req, res) => {
@@ -104,8 +126,9 @@ const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gestur
 /** A page that records what the policy refused, what threw, and what it asked for. */
 async function watched(context) {
   const page = await context.newPage();
-  const seen = { violations: [], errors: [], console: [], requests: [] };
+  const seen = { violations: [], errors: [], console: [], requests: [], failed: [] };
   page.on('pageerror', (e) => seen.errors.push(String(e)));
+  page.on('requestfailed', (r) => seen.failed.push(r.url()));
   page.on('console', (m) => {
     const text = m.text();
     if (m.type() === 'error' || /Content Security Policy|Content-Security-Policy|Permissions[- ]Policy|Trusted Type/i.test(text)) seen.console.push(`${m.type()}: ${text}`);
@@ -218,9 +241,15 @@ try {
     await page.waitForFunction(() => /Imported 1 mix/.test(document.getElementById('toast').textContent));
     check(true, 'Import library reads the exported file back');
     await page.click('#about');
-    const about = await page.evaluate(() => ({ open: document.getElementById('aboutDialog').open, version: document.getElementById('aboutVersion').textContent }));
+    const about = await page.evaluate(() => ({
+      open: document.getElementById('aboutDialog').open, version: document.getElementById('aboutVersion').textContent,
+      account: !document.getElementById('account').hidden, privacy: !document.getElementById('privacyLocal').hidden && document.getElementById('privacyAccount').hidden,
+      drawn: document.getElementById('accountBody').childElementCount, thanks: !document.getElementById('supporterThanks').hidden,
+    }));
     await page.click('#aboutClose');
     check(about.open && /^\d+\.\d+\.\d+$/.test(about.version), `About opens (version ${about.version})`);
+    check(!about.account && about.drawn === 0 && !about.thanks && about.privacy,
+      'with no API on the host (the site\'s own api/config says nothing is on), About has no account, no shop and the privacy sentence for a site without sign-in');
     await page.selectOption('#theme', 'light');
     check(await page.evaluate(() => document.documentElement.dataset.theme) === 'light', 'the theme select applies');
     await page.click('#play');
@@ -251,6 +280,14 @@ try {
     fromCache.html = await enforcedAt(context, `${home}?mix=${encodeURIComponent(shareCode)}`);
     check(fromCache.style === 'lofi' && fromCache.search === '' && /shared mix/.test(fromCache.toast) && fromCache.html === 'TypeError',
       `offline, a share link opens from the cache, still under the policy, and leaves the address bar clean (${fromCache.style}, "${fromCache.toast}")`);
+    // Offline, the page's one question to the API, api/config, which the service worker leaves
+    // to the network, fails, and Chromium notes that it did: the only request that may fail, and
+    // the only console line it may cost.
+    await page.waitForTimeout(300);
+    const unanswered = seen.failed.filter((u) => u === `${home}api/config`).length;
+    check(unanswered === 1 && seen.failed.length === 1, `offline, nothing fails but the page's question to the API, which the worker does not answer from its cache (${seen.failed.join(', ')})`);
+    let allowance = unanswered;
+    seen.console = seen.console.filter((m) => !(allowance > 0 && /^error: Failed to load resource: net::ERR_[A-Z_]+$/.test(m) && allowance--));
     offline = false;
 
     // ---- an address the site does not have ----
@@ -284,6 +321,193 @@ try {
   check(strays.length === 0, `the page asked for nothing outside ${BASE} (${seen.requests.length} requests${strays.length ? `; outside: ${strays.join(', ')}` : ''})`);
   check(outside.length === 0 && served.length > 0, `nor did its service worker: the server saw ${served.length} requests, ${outside.length} outside the site${outside.length ? `: ${outside.join(', ')}` : ''}`);
   await context.close();
+
+  // ---- a host with no api/config at all ----
+  {
+    apiMode = 'missing';
+    const ctx = await browser.newContext({ serviceWorkers: 'block' });
+    const quiet = [];
+    await ctx.exposeBinding('__violation', (_source, text) => quiet.push(text));
+    await ctx.addInitScript(VIOLATIONS);
+    const { page: p, seen: s } = await watched(ctx);
+    await p.goto(home);
+    await p.waitForSelector('.seg');
+    await p.waitForResponse((r) => r.url() === `${home}api/config`).catch(() => null);
+    await p.waitForTimeout(300);
+    const state = await p.evaluate(() => ({ account: !document.getElementById('account').hidden, drawn: document.getElementById('accountBody').childElementCount, privacy: !document.getElementById('privacyLocal').hidden }));
+    // Chromium's own note that a response was a 404 is the one console line this costs.
+    const lines = s.console.filter((m) => !m.startsWith('error: Failed to load resource: the server responded with a status of 404'));
+    check(!state.account && state.drawn === 0 && state.privacy && quiet.length === 0 && s.errors.length === 0 && lines.length === 0,
+      `api/config answered 404: nothing is drawn and nothing breaks (${s.console.length} console line, Chromium's note of the 404${lines.length ? `; others: ${lines.join(' | ')}` : ''})`);
+    await ctx.close();
+    apiMode = 'site';
+  }
+
+  // ---- sign in with Google and "Support this app", where the site runs its API ----
+  // The whole flow in Chromium under the site's real policy, the service worker in control:
+  // sign in (Google's authorize page answered by a redirect to the callback, as Google answers a
+  // consenting visitor), buy (Stripe's Checkout answered by a redirect to the success address once
+  // the signed webhook is posted), the entitlement drawn, sign out, sign in again, delete the
+  // account. Nothing may leave the site but those two navigations, which never reach the network.
+  {
+    apiMode = 'kit';
+    const ctx = await browser.newContext();
+    const refused = [];
+    await ctx.exposeBinding('__violation', (_source, text) => refused.push(text));
+    await ctx.addInitScript(VIOLATIONS);
+    const away = [];
+    const person = { sub: '7001', email: 'grace@example.com' };
+    // Google's side. Playwright routes a request but not the ones its redirect makes, so Google's
+    // authorize page is answered where the API's redirect to it is made: the API's own answer to
+    // api/auth/google/start is fetched as it is (its sign-in cookie with it), the authorize URL in
+    // it checked as Google checks it (fakes.consent), and the browser sent on to the callback
+    // Google sends a consenting visitor back to. The browser never asks Google for anything.
+    await ctx.route(`${home}api/auth/google/start?*`, async (route) => {
+      const response = await route.fetch({ maxRedirects: 0 });
+      const location = response.headers().location || '';
+      away.push(location);
+      const back = fakes.consent(location, person);
+      return route.fulfill({ response, headers: { ...response.headers(), location: back.href } });
+    });
+    let delivered = null;
+    await ctx.route('https://checkout.stripe.com/**', (route) => {
+      away.push(route.request().url());
+      const id = new URL(route.request().url()).pathname.split('/').pop();
+      const back = fakes.sessions.get(id).get('success_url');
+      // Stripe tells the site after the visitor is back, a moment later: the page polls api/me.
+      delivered = new Promise((resolve) => setTimeout(() => {
+        const { body, signature } = signedDelivery(fakes.paid(route.request().url()));
+        fetch(`${home}api/webhooks/stripe`, { method: 'POST', headers: { 'stripe-signature': signature, 'content-type': 'application/json' }, body })
+          .then((r) => resolve(r.status), () => resolve('failed'));
+      }, 1000));
+      return route.fulfill({ status: 302, headers: { location: back } });
+    });
+    const { page: p, seen: s } = await watched(ctx);
+    const aboutState = () => p.evaluate(() => ({
+      account: !document.getElementById('account').hidden,
+      text: document.getElementById('accountBody').textContent,
+      buttons: [...document.querySelectorAll('#accountBody button')].map((b) => b.textContent),
+      thanks: !document.getElementById('supporterThanks').hidden,
+      privacy: document.getElementById('privacyLocal').hidden && !document.getElementById('privacyAccount').hidden,
+      toast: document.getElementById('toast').textContent,
+      search: location.search,
+    }));
+    const openAbout = async () => {
+      await p.click('#about');
+      await p.waitForFunction(() => !document.getElementById('account').hidden && document.querySelector('#accountBody button'));
+    };
+    /** A click that leaves the page (for Google, for Stripe) and the page it comes back to. */
+    const roundTrip = async (selector) => {
+      const back = p.waitForEvent('framenavigated', { predicate: (f) => f === p.mainFrame(), timeout: 15000 });
+      await p.click(selector);
+      await back;
+      await p.waitForLoadState('load');
+      await p.waitForSelector('.seg');
+    };
+    try {
+      await p.goto(home);
+      await p.waitForSelector('.seg');
+      const controlled = await p.evaluate(async () => {
+        await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 10000))]);
+        for (let i = 0; i < 100 && !navigator.serviceWorker.controller; i++) await new Promise((r) => setTimeout(r, 50));
+        return !!navigator.serviceWorker.controller;
+      });
+      check(controlled, 'the service worker controls the page before the sign-in, so every step below passes through its scope');
+
+      // Leaving for Google asks first when something would be lost: here a shared mix that is
+      // only playing (not saved until the visitor changes or saves it), a recording and a WAV
+      // export, both running.
+      const shared = await p.evaluate(() => AN.storage.encodeShare({ ...AmbientNoiser.state.settings, seed: 'shared-before-sign-in' }));
+      await p.goto(`${home}?mix=${encodeURIComponent(shared)}`);
+      await p.waitForSelector('.seg');
+      await p.click('#record');
+      await p.waitForFunction(() => AmbientNoiser.state.recorder && AmbientNoiser.state.recorder.recording);
+      await p.selectOption('#wavMinutes', '1');
+      await p.click('#wav');
+      await p.waitForFunction(() => AmbientNoiser.state.wavBusy);
+      await openAbout();
+      let question = '';
+      p.once('dialog', (d) => { question = d.message(); d.dismiss(); });
+      await p.click('#accountSignIn');
+      await p.waitForTimeout(300);
+      const stayed = await p.evaluate(() => ({ url: location.href, recording: AmbientNoiser.state.recorder.recording, wav: AmbientNoiser.state.wavBusy, seed: AmbientNoiser.state.settings.seed }));
+      check(/^Signing in leaves this page for Google\. The recording that is running will be lost\. The WAV export that is running will stop\. The shared mix you are playing is not saved: Save keeps it\. Leave anyway\?$/.test(question)
+        && stayed.url === home && stayed.recording && stayed.wav && stayed.seed === 'shared-before-sign-in' && away.length === 0,
+        `signing in asks first when a recording, a WAV export and an unsaved shared mix would be lost, and "Cancel" stays ("${question}")`);
+      await p.click('#aboutClose');
+      await p.click('#wavCancel');
+      await p.waitForFunction(() => !AmbientNoiser.state.wavBusy, null, { timeout: 60000 });
+      await p.click('#record');
+      await p.waitForFunction(() => !AmbientNoiser.state.recorder.recording);
+      await p.goto(home);
+      await p.waitForSelector('.seg');
+
+      await openAbout();
+      const out = await aboutState();
+      check(out.account && out.privacy && !out.thanks && JSON.stringify(out.buttons) === JSON.stringify(['Sign in with Google', 'Sign in to buy']) && /Support this app · €3\.00/.test(out.text),
+        `with the API on, About offers "Sign in with Google" and "Support this app" at Stripe's price, with the exact privacy sentence (${out.buttons.join(', ')}; "${out.text.slice(0, 60)}…")`);
+
+      await roundTrip('#accountSignIn');
+      await openAbout();
+      const signedIn = await aboutState();
+      check(away.length === 1 && /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/.test(away[0]) && /^Signed in as grace@example\.com/.test(signedIn.text) && JSON.stringify(signedIn.buttons) === JSON.stringify(['Sign out', 'Delete account', 'Buy']),
+        `Sign in with Google goes to Google and back through the callback, and About says who is signed in (${signedIn.text.slice(0, 40)}…)`);
+
+      await roundTrip('#supportBuy');
+      await p.waitForFunction(() => /^Thank you — Support this app is unlocked\.$/.test(document.getElementById('toast').textContent), null, { timeout: 20000 });
+      const hook = await delivered;
+      await openAbout();
+      const bought = await aboutState();
+      check(hook === 200 && away.length === 2 && /^https:\/\/checkout\.stripe\.com\/c\/pay\/cs_test_/.test(away[1]) && bought.thanks && /Owned$/.test(bought.text) && bought.search === '',
+        `Buy goes to Stripe's Checkout and back; the signed webhook grants it, the page polls api/me and thanks the supporter in About ("Owned", webhook ${hook}, address ${bought.search || 'clean'})`);
+
+      await p.click('#accountSignOut');
+      await p.waitForSelector('#accountSignIn');
+      const out2 = await aboutState();
+      check(!out2.thanks && JSON.stringify(out2.buttons) === JSON.stringify(['Sign in with Google', 'Sign in to buy']), 'Sign out ends the session, and the thank-you goes with it');
+
+      await roundTrip('#accountSignIn');
+      await openAbout();
+      const again = await aboutState();
+      check(again.thanks && /Owned$/.test(again.text), 'signing in again brings the purchase back: it belongs to the Google account');
+
+      let asked = '';
+      p.once('dialog', (d) => { asked = d.message(); d.accept(); });
+      await p.click('#accountDelete');
+      await p.waitForSelector('#accountSignIn');
+      await roundTrip('#accountSignIn');
+      await openAbout();
+      const deleted = await aboutState();
+      check(/^Delete your account\?/.test(asked) && !deleted.thanks && /^Signed in as grace@example\.com/.test(deleted.text) && deleted.buttons.includes('Buy'),
+        'Delete account asks first, then deletes the account and its purchase: signed in again, nothing is owned');
+
+      // a sign-in that does not complete comes back as ?signin=failed, said once, then taken out
+      await p.goto(`${home}api/auth/google/callback?code=forged&state=forged`);
+      await p.waitForSelector('.seg');
+      await p.waitForFunction(() => document.getElementById('toast').textContent === "Sign-in didn't complete.");
+      check((await p.evaluate(() => location.search)) === '', 'a sign-in that does not complete says "Sign-in didn\'t complete." and leaves the address clean');
+
+      const cachedApi = await p.evaluate(async () => {
+        const out = [];
+        for (const name of await caches.keys()) for (const r of await (await caches.open(name)).keys()) if (/\/api\//.test(new URL(r.url).pathname)) out.push(r.url);
+        return out;
+      });
+      check(cachedApi.length === 0, `the service worker cached nothing under api/${cachedApi.length ? `: ${cachedApi.join(', ')}` : ''}`);
+    } catch (e) {
+      console.error(e);
+      failures++;
+    }
+    check(refused.length === 0, `account flow: no Content-Security-Policy or Trusted Types violation${refused.length ? `: ${refused.join(' | ')}` : ''}`);
+    check(s.errors.length === 0, `account flow: no page errors${s.errors.length ? `: ${s.errors.join(' | ')}` : ''}`);
+    check(s.console.length === 0, `account flow: no console errors or policy warnings${s.console.length ? `: ${s.console.join(' | ')}` : ''}`);
+    const strays = s.requests.filter((u) => !inSite(u) && !away.includes(u));
+    check(strays.length === 0 && away.length === 4 && s.requests.filter((u) => away.includes(u)).length === 1,
+      `account flow: nothing outside ${BASE}: Google's page was answered at the API's redirect to it (3 sign-ins), and Stripe's Checkout, the one navigation away, was answered in the browser${strays.length ? `; outside: ${strays.join(', ')}` : ''}`);
+    check(fakes.unexpected.length === 0 && kitLog.length === 1 && /sign-in failed \(no valid sign-in cookie\)/.test(kitLog[0]),
+      `the API asked Google and Stripe only what they answer, and logged only the forged sign-in (${kitLog.join(' | ')}${fakes.unexpected.join(' | ')})`);
+    await ctx.close();
+    apiMode = 'site';
+  }
 
   // ---- framed by another site ----
   const frameCtx = await browser.newContext();
@@ -333,6 +557,7 @@ try {
     ['the safety net itself', 'js/guard.js', false],
     ['the stylesheet', 'css/style.css', false],
     ['a script init() does not need', 'js/card.js', true],
+    ['the account, which the app starts without', 'js/account.js', true],
   ]) {
     const ctx = await browser.newContext({ serviceWorkers: 'block' });
     await ctx.route(`${home}${file}`, (r) => r.abort());
