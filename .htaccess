@@ -2,6 +2,15 @@
 # Cloudflare Pages read _headers instead; nginx: deploy/nginx.conf. The headers are the same
 # in all three and in the pages' <meta>, and test/website.test.js holds them equal. Publish
 # the folder `node scripts/site.js <folder> --host=apache` writes, not a checkout.
+#
+# Apache reads this file only where the server configuration lets it: `AllowOverride FileInfo
+# Indexes Options` (or `All`) for the folder, Indexes for DirectoryIndex below (with FileInfo
+# and Options alone every request is a 500), and mod_rewrite and mod_headers, which a stock
+# Debian or Ubuntu Apache does not load (`a2enmod rewrite headers`). Nothing here is wrapped in
+# <IfModule>: wrapped, a missing module skipped its block without a word, and the folder was
+# served with none of the headers below and no allow-list. Unwrapped, a missing module is a 500
+# for every request and a line in the error log naming the directive it could not read.
+#
 # The site's API (sign in with Google and "Support this app", server/start.mjs) is set up in the
 # virtual host, not here: ProxyPass is server configuration. With mod_proxy and mod_proxy_http,
 # these lines (README.md gives the same) hand it /api/, send the Strict-Transport-Security header
@@ -26,40 +35,35 @@ DirectoryIndex index.html
 ErrorDocument 404 /404.html
 ErrorDocument 403 /404.html
 
-<IfModule mod_mime.c>
-  AddType application/manifest+json .webmanifest
-  AddType image/svg+xml .svg
-  AddType text/javascript .js
-  # the licence has no extension; serve it as text rather than a download
-  <Files "LICENSE">
-    ForceType text/plain
-  </Files>
-</IfModule>
+AddType application/manifest+json .webmanifest
+AddType image/svg+xml .svg
+AddType text/javascript .js
+# the licence has no extension; serve it as text rather than a download
+<Files "LICENSE">
+  ForceType text/plain
+</Files>
 
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  # everything over https
-  RewriteCond %{HTTPS} !=on
-  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
-  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-  # The site's own files and nothing else. The repository's notes, tests, scripts and
-  # configs, .git and node_modules all answer 404, so a server pointed at a checkout by
-  # mistake still publishes only the site; a folder answers 404 rather than a listing.
-  RewriteRule !^(index\.html|404\.html|sw\.js|manifest\.webmanifest|(icon|favicon)\.svg|robots\.txt|LICENSE|\.well-known/security\.txt|api/config|css/[a-z]+\.css|js/(audio/)?[a-z]+\.js)?$ - [R=404,L]
-</IfModule>
+RewriteEngine On
+# everything over https
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+# The site's own files and nothing else. The repository's notes, tests, scripts and
+# configs, .git and node_modules all answer 404, so a server pointed at a checkout by
+# mistake still publishes only the site; a folder answers 404 rather than a listing.
+RewriteRule !^(index\.html|404\.html|sw\.js|manifest\.webmanifest|(icon|favicon)\.svg|robots\.txt|LICENSE|\.well-known/security\.txt|api/config|css/[a-z]+\.css|js/(audio/)?[a-z]+\.js)?$ - [R=404,L]
 
-<IfModule mod_headers.c>
-  Header always set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'sha256-R/YcaBd5BMoXLCypGal5N2/WGoOqL8043Ls13x3RVKQ='; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw; frame-ancestors 'none'; upgrade-insecure-requests"
-  Header always set X-Content-Type-Options "nosniff"
-  Header always set X-Frame-Options "DENY"
-  Header always set Referrer-Policy "no-referrer"
-  Header always set Permissions-Policy "accelerometer=(), aria-notify=(), attribution-reporting=(), autoplay=(self), browsing-topics=(), camera=(), captured-surface-control=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), cross-origin-isolated=(), deferred-fetch=(), deferred-fetch-minimal=(), digital-credentials-get=(), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), identity-credentials-get=(), idle-detection=(), interest-cohort=(), join-ad-interest-group=(), keyboard-map=(), language-detector=(), local-fonts=(), local-network-access=(), magnetometer=(), microphone=(), midi=(), on-device-speech-recognition=(), otp-credentials=(), payment=(), picture-in-picture=(), private-aggregation=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-create=(), publickey-credentials-get=(), run-ad-auction=(), screen-wake-lock=(), serial=(), shared-storage=(), shared-storage-select-url=(), storage-access=(), summarizer=(), sync-xhr=(), translator=(), unload=(), usb=(), window-management=(), xr-spatial-tracking=()"
-  Header always set Cross-Origin-Opener-Policy "same-origin"
-  Header always set Cross-Origin-Resource-Policy "same-origin"
-  # Only over https: directly (mod_ssl), or behind a proxy that ended TLS and says so, the
-  # same two cases the redirect above treats as https. env=HTTPS alone is set by mod_ssl and
-  # nothing else, so behind a proxy the header never went out.
-  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" "expr=%{HTTPS} == 'on' || %{HTTP:X-Forwarded-Proto} == 'https'"
-  # no file name carries a version: revalidate every load (an unchanged file is a 304)
-  Header always set Cache-Control "no-cache"
-</IfModule>
+Header always set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'sha256-R/YcaBd5BMoXLCypGal5N2/WGoOqL8043Ls13x3RVKQ='; img-src 'self'; worker-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types ambient-noiser-ticker ambient-noiser-sw; frame-ancestors 'none'; upgrade-insecure-requests"
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set Referrer-Policy "no-referrer"
+Header always set Permissions-Policy "accelerometer=(), aria-notify=(), attribution-reporting=(), autoplay=(self), browsing-topics=(), camera=(), captured-surface-control=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), cross-origin-isolated=(), deferred-fetch=(), deferred-fetch-minimal=(), digital-credentials-get=(), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), identity-credentials-get=(), idle-detection=(), interest-cohort=(), join-ad-interest-group=(), keyboard-map=(), language-detector=(), local-fonts=(), local-network-access=(), magnetometer=(), microphone=(), midi=(), on-device-speech-recognition=(), otp-credentials=(), payment=(), picture-in-picture=(), private-aggregation=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-create=(), publickey-credentials-get=(), run-ad-auction=(), screen-wake-lock=(), serial=(), shared-storage=(), shared-storage-select-url=(), storage-access=(), summarizer=(), sync-xhr=(), translator=(), unload=(), usb=(), window-management=(), xr-spatial-tracking=()"
+Header always set Cross-Origin-Opener-Policy "same-origin"
+Header always set Cross-Origin-Resource-Policy "same-origin"
+# On every answer, with no condition, as _headers and deploy/nginx.conf send it: env=HTTPS and
+# %{HTTPS} are set by mod_ssl alone, so a condition on them dropped the header behind a proxy
+# that ended TLS. A browser ignores it on a plain http answer, which here is only ever the
+# redirect above.
+Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# no file name carries a version: revalidate every load (an unchanged file is a 304)
+Header always set Cache-Control "no-cache"

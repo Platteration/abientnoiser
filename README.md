@@ -115,6 +115,16 @@ with the same headers in each:
 | nginx | `node scripts/site.js <folder>` | `deploy/nginx.conf`, copied into the server's config by hand (any nginx from 1.9.5: Debian 12's 1.22 and Ubuntu 24.04's 1.24 load it); delete its `location ^~ /api/` block unless `server/start.mjs` runs (below) |
 | GitHub Pages | the workflow | none: see below |
 
+**Apache** reads `.htaccess` only where the server configuration lets it, and no `.htaccess` can
+set that part itself. Give the folder `AllowOverride FileInfo Indexes Options` (or
+`AllowOverride All`): the file sets `DirectoryIndex`, which needs `Indexes`, and with `FileInfo
+Options` alone Apache 2.4.58 answers every request 500 (measured). Load `mod_rewrite` and
+`mod_headers` (`a2enmod rewrite headers`), which a stock Debian or Ubuntu Apache leaves off:
+nothing in the file is wrapped in `<IfModule>`, so without them every request is a 500 and the
+error log names the directive, where a wrapped rule was skipped without a word and the folder went out
+with no headers and no allow-list. And set `ServerTokens Prod` in the server configuration, so no
+answer names Apache's version.
+
 Serve it over HTTPS only: the Apache and nginx settings redirect plain `http://`, and Netlify,
 Cloudflare Pages and GitHub Pages each have a switch for it. Never point a web server at a git
 checkout, whose `.git/` holds the whole history. If it happens anyway, the Apache and nginx
@@ -136,7 +146,7 @@ headers back off every response:
 | `Permissions-Policy` | every feature Chromium knows off — camera, microphone, location, sensors, USB, payment, local network access, the ad and attribution APIs, the on-device AI models, `unload` and the rest — but `autoplay` and `clipboard-write` for this site, and the client hints, which only say what the browser tells this same site | The app plays sound and copies a link, nothing more. The website suite reads the allowed features back in Chromium and fails on any other, so a feature a newer Chromium adds is denied in all three files before the suite passes. |
 | `Cross-Origin-Opener-Policy` | `same-origin` | Another window keeps no handle on this one. |
 | `Cross-Origin-Resource-Policy` | `same-origin` | Other sites cannot embed the app's files. |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Browsers remember to use HTTPS. Apache sends it over https, directly or behind a proxy that ended TLS and says so in `X-Forwarded-Proto` (the same two cases its redirect treats as https). |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Browsers remember to use HTTPS. Every host sends it with no condition, Apache included: a condition on https (`env=HTTPS`, `%{HTTPS}`) reads what mod_ssl alone sets, so behind a proxy that ended TLS it was never sent. A browser ignores it on a plain `http://` answer, which is only ever the redirect to https. |
 | `Cache-Control` | `no-cache` | No file name carries a version, so every load revalidates (an unchanged file costs a 304) and a deploy never mixes old scripts with new HTML. The service worker keeps the offline copy. |
 
 **GitHub Pages sends no headers.** The page carries the same policy in a `<meta>` tag, and the
@@ -191,12 +201,15 @@ plain folder nothing of it runs and the app is exactly as described above.
   Stripe's signed webhook alone. The thank-you is drawn in the visitor's own browser, so anyone
   who edits the page can show it to themselves; it gates nothing.
 - **What leaves the device.** Nothing, unless the visitor signs in or buys. Then Google tells
-  the site an account id and (if verified) an email address, and Stripe handles the payment;
-  the site keeps the account id, the email address while the visitor is signed in, what was
-  bought and Stripe's customer id. Mixes, the queue and preferences are never sent. Delete
-  account removes all of it but the payment, which stays with Stripe, and the count of
-  checkouts started in the last hour, which names the account id and expires by itself within
-  two hours.
+  the site an account id and (if verified) an email address, and Stripe handles the payment and
+  is told the account id with it (the kit sends it as the Checkout Session's
+  `client_reference_id` and in the payment's metadata, which is how its webhook finds the
+  account); the site keeps the account id, the email address while the visitor is signed in,
+  what was bought, Stripe's customer id and, for 30 days, the Checkout Session it last gave the
+  visitor, so that a second Buy is given that one rather than a second payment. Mixes, the queue
+  and preferences are never sent. Delete account removes all of it but the payment, which stays
+  with Stripe under the account id it was made with, and the count of checkouts started in the
+  last hour, which names the account id and expires by itself within two hours.
 - **How it runs.** `server/kit/` is the shared kit (sign-in, sessions, Checkout, the webhook),
   copied unchanged; `server/catalogue.js` is what this site sells. On **Cloudflare Pages**
   (the reference host) `functions/api/[[path]].js` runs it and `_routes.json` in the published
@@ -272,7 +285,7 @@ The browser suite renders every style offline and checks levels and onset, that 
 
 The website suite (`test/site.smoke.mjs`, the second half of `test:e2e`) builds the site with `scripts/site.js`, serves it at `/abientnoiser/` from a server that sends every response the headers `_headers` writes for it, and drives the app in Chromium: play, a style, the mixer, the movement editor, save, copy link, the share image, export and import, a recording, About, the theme, the service worker's install, a share link opened offline, the not-found page and its link home; then, with the API mounted at `/abientnoiser/api/` and a fake Google and Stripe behind it, signing in, buying, Stripe's signed webhook, the thank-you, signing out and in again and deleting the account, through the real service worker, and a host whose `api/config` is a 404. It fails on any policy or Trusted Types violation, any page error, any console error and any request outside the site, the service worker's included; it also checks that another site cannot frame the app, that the repository's own files are not published, that the safety net speaks when JavaScript is off, when a script does not load and when one throws while starting, and that it stays quiet when the file that did not load is its own or the stylesheet and the app starts anyway. `test/website.test.js` holds the headers equal in every file that writes them and on every path of the site, recomputes the style hash, and reads the Apache, nginx and Netlify rules the way each host does to check that every repository file outside the site answers 404. The hosts suite (`test/hosts.smoke.mjs`, the last part of `test:e2e`) runs the real thing: `deploy/nginx.conf` in the nginx installed where it runs and the built site's `.htaccess` in the Apache installed there (over https, and behind a proxy that ended TLS), serving the site with a checkout's files planted beside it, and checks every file of the site answers 200 with every header and everything else the not-found page; with `server/start.mjs` behind nginx's `location ^~ /api/` and an Apache virtual host set up with the lines above, it checks `/api/` is the API's, with the API's own headers and HSTS, and once the API has stopped, that both answer `/api/` with the site's not-found page and every header; and with that nginx location deleted, that nginx serves the folder's `api/config`. It says so and passes where nginx or Apache is not installed, unless `CI` is set; GitHub's Ubuntu 24.04 runner has both.
 
-The suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `npm audit --omit=dev --audit-level=high` over the lockfile. CI's suites and the Pages build run on `ubuntu-24.04`, not `ubuntu-latest`, which becomes Ubuntu 26.04 from 19 October 2026: the Playwright the lockfile pins (1.56.1) has no Chromium build for 26.04, and its browser install fails there. `test/ci.test.js` asks the locked Playwright whether it has a build for the release each job names, so raising Playwright is what lets the runner move on.
+The suites run in CI on every push (`.github/workflows/ci.yml`), and a separate job runs `node .github/audit/npm-audit.mjs`, the audit gate the platteration repositories share: `npm audit --omit=dev` over the lockfile, failing on every high or critical advisory that `.github/audit/accepted.json` does not accept. This repository keeps no such list, so it accepts none, and today the production tree it audits is empty. Every job of CI and of the Pages deploy runs on `ubuntu-24.04`, not `ubuntu-latest`, which becomes Ubuntu 26.04 from 19 October 2026: the Playwright the lockfile pins (1.56.1) has no Chromium build for 26.04, and its browser install fails there. `test/ci.test.js` asks the locked Playwright whether it has a build for the release each job names, so raising Playwright is what lets the runner move on. Every official action is pinned by commit at a release that runs on Node 24.
 
 ## Project layout
 

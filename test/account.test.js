@@ -219,6 +219,37 @@ test('a 409 from Checkout unlocks nothing the server has not reported: api/me is
   assert.deepEqual(p.seen.assigned, []);
 });
 
+test('a 409 payment_pending (paid, its webhook not yet recorded) says the payment is on its way, and draws nothing api/me has not reported', async () => {
+  // The kit gives no second Checkout for a product whose session was paid: until the webhook is
+  // recorded, Buy answers 409 payment_pending (server/kit/README.md, "For the page").
+  const p = page({ 'GET config': ok(CONFIG), 'GET me': ADA, 'POST checkout': { status: 409, body: { error: 'payment_pending' } } });
+  await p.ctl.ready;
+  await p.els.body.button('Buy').click();
+  assert.deepEqual(p.calls.map((c) => `${c.method} ${c.route}`), ['GET config', 'GET me', 'POST checkout', 'GET me']);
+  assert.deepEqual(p.seen.notes, ['Payment received. It can take a minute to appear — reload to check.']);
+  assert.deepEqual(p.els.body.buttons().map((b) => b.textContent), ['Sign out', 'Delete account', 'Buy']);
+  assert.equal(p.els.thanks.hidden, true, 'no thank-you before api/me reports it');
+  assert.deepEqual(p.seen.assigned, [], 'and no Checkout');
+
+  // api/me already reporting it by the time it is asked: it is owned, and nothing more is said
+  let mes = 0;
+  const landed = page({ 'GET config': ok(CONFIG), 'GET me': () => (mes++ ? ADA_SUPPORTER : ADA), 'POST checkout': { status: 409, body: { error: 'payment_pending' } } });
+  await landed.ctl.ready;
+  await landed.els.body.button('Buy').click();
+  assert.deepEqual(landed.seen.notes, []);
+  assert.match(landed.els.body.textContent, /Owned$/);
+
+  // any other 409 (already_owned, or a body that is not the kit's) is read as owned: api/me is
+  // asked, and nothing is said
+  for (const body of [{ error: 'already_owned' }, { error: 'subscription_active' }, 'not json', { error: { code: 'payment_pending' } }]) {
+    const other = page({ 'GET config': ok(CONFIG), 'GET me': ADA, 'POST checkout': { status: 409, body } });
+    await other.ctl.ready;
+    await other.els.body.button('Buy').click();
+    assert.deepEqual(other.seen.notes, [], JSON.stringify(body));
+    assert.deepEqual(other.calls.map((c) => `${c.method} ${c.route}`), ['GET config', 'GET me', 'POST checkout', 'GET me'], JSON.stringify(body));
+  }
+});
+
 test('a supporter reads the thank-you in About and "Owned" in place of Buy', async () => {
   const p = page({ 'GET config': ok(CONFIG), 'GET me': ADA_SUPPORTER });
   await p.ctl.ready;

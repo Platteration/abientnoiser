@@ -164,7 +164,7 @@
          every static host), the second where the site runs its API and js/account.js draws the
          Account section below. -->
     <p class="hint" id="privacyLocal">Nothing leaves your device: your mixes, queue and preferences live in this browser only, and there is no server to send them to. The one exception is a share link, which carries the whole mix in its URL — anyone you give it to gets the mix.</p>
-    <p class="hint" id="privacyAccount" hidden>Your mixes, queue and preferences live in this browser only, and none of them is sent anywhere. Nothing else leaves your device unless you sign in or buy: then Google tells this site an account id and your email address, and Stripe handles the payment. The site keeps the account id, your email address while you are signed in, what was bought and Stripe's customer id. A share link carries the whole mix in its URL — anyone you give it to gets the mix.</p>
+    <p class="hint" id="privacyAccount" hidden>Your mixes, queue and preferences live in this browser only, and none of them is sent anywhere. Nothing else leaves your device unless you sign in or buy: then Google tells this site an account id and your email address, and Stripe handles the payment and is told that account id with it. The site keeps the account id, your email address while you are signed in, what was bought, Stripe's customer id and, for 30 days, the checkout it last sent you to. A share link carries the whole mix in its URL — anyone you give it to gets the mix.</p>
     <section id="account" class="account" aria-labelledby="accountTitle" hidden>
       <h3 id="accountTitle">Account</h3>
       <div id="accountBody"></div>

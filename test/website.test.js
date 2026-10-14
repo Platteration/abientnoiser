@@ -195,13 +195,15 @@ test('one policy on every path: no rule in _headers gives one of the site\'s pat
   assert.deepEqual(Object.keys(netlifyHeaders()).filter((pattern) => !matched.has(pattern)), [], 'every rule in _headers matches a path of the site, so this test read it');
 });
 
-test('Apache sends HSTS on every https response, behind a TLS-terminating proxy too', () => {
+test('Apache sends HSTS on every response, with no condition, so behind a TLS-terminating proxy too', () => {
   // The redirect treats a request as https when mod_ssl says so or a proxy says so in
-  // X-Forwarded-Proto; env=HTTPS is mod_ssl's alone, so behind a proxy HSTS never went out.
+  // X-Forwarded-Proto. HSTS takes no condition: env=HTTPS and %{HTTPS} are mod_ssl's alone, so a
+  // condition on them dropped it behind a proxy; a browser ignores it on a plain http answer.
   const conf = read('.htaccess');
   assert.match(conf, /^\s*RewriteCond %\{HTTPS\} !=on\n\s*RewriteCond %\{HTTP:X-Forwarded-Proto\} !=https\n\s*RewriteRule \^ https:/m, 'the redirect to https');
-  assert.deepEqual(apacheRules().conditions, { 'Strict-Transport-Security': `"expr=%{HTTPS} == 'on' || %{HTTP:X-Forwarded-Proto} == 'https'"` },
-    'HSTS alone has a condition, and it is the redirect\'s two cases of https');
+  const { headers, conditions } = apacheRules();
+  assert.deepEqual(conditions, {}, 'no header has a condition, HSTS included');
+  assert.equal(headers['Strict-Transport-Security'], HEADERS['Strict-Transport-Security'], 'and HSTS is _headers\' value');
 });
 
 test('one policy: every page carries the header policy in its <meta>, less what a <meta> cannot say', () => {

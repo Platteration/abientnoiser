@@ -188,8 +188,10 @@
         const r = await call('me', { method: 'DELETE' });
         return !!r && r.status === 204;
       },
-      /** 'signin' (401), 'owned' (409), 'unavailable' (404), 'busy' (429), 'failed' (anything
-       *  else, an address that is not Stripe's included), or { url } to go to. */
+      /** 'signin' (401), 'pending' (409 `payment_pending`: paid, its webhook not yet recorded),
+       *  'owned' (any other 409), 'unavailable' (404), 'busy' (429), 'failed' (anything else, a
+       *  502 that pressing again may clear and an address that is not Stripe's included), or
+       *  { url } to go to. No 409 carries a Checkout address, so none is followed. */
       async checkout(product) {
         const r = await call('checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product }) });
         if (!r) return 'failed';
@@ -197,7 +199,11 @@
           const url = checkoutAddress(await body(r));
           return url ? { url } : 'failed';
         }
-        return { 401: 'signin', 404: 'unavailable', 409: 'owned', 429: 'busy' }[r.status] || 'failed';
+        if (r.status === 409) {
+          const answer = await body(r);
+          return isRecord(answer) && answer.error === 'payment_pending' ? 'pending' : 'owned';
+        }
+        return { 401: 'signin', 404: 'unavailable', 429: 'busy' }[r.status] || 'failed';
       },
     };
   }
@@ -286,7 +292,9 @@
         const result = await api.checkout(SUPPORTER);
         if (typeof result === 'object') { o.location.assign(result.url); return; }
         if (result === 'signin') state.me = SIGNED_OUT;
-        if (result === 'owned') state.me = (await api.me()) || state.me;
+        if (result === 'owned' || result === 'pending') state.me = (await api.me()) || state.me;
+        // Paid, and the kit gives no second Checkout for it: say the purchase is on its way.
+        if (result === 'pending' && !owns()) o.note(WORDS.paymentPending, NOTE_MS);
         if (result === 'unavailable') o.note(NOTES.unavailable, NOTE_MS);
         if (result === 'busy') o.note(NOTES.busy, NOTE_MS);
         if (result === 'failed') o.note(NOTES.failed, NOTE_MS);

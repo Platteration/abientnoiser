@@ -8,8 +8,11 @@
 // turns the authorize URL the kit redirected to into the callback URL Google would send the
 // browser back to, and a token endpoint that checks the code, the client and the PKCE verifier
 // before it signs an ID token for the nonce. Stripe: the one Price "Support this app" is sold at,
-// Checkout Sessions recorded as the kit created them, and webhook events signed as Stripe signs
-// them (with node:crypto, not the kit's own HMAC).
+// Checkout Sessions recorded as the kit created them (a request under an Idempotency-Key Stripe
+// has answered before is given that first answer, as Stripe gives it) and read back as Stripe
+// reads one (`GET /v1/checkout/sessions/<id>`: open with its address, then complete with its
+// payment once paid), and webhook events signed as Stripe signs them (with node:crypto, not the
+// kit's own HMAC).
 
 import { Buffer } from 'node:buffer';
 import { createHash, createHmac } from 'node:crypto';
@@ -46,6 +49,10 @@ export async function createFakes() {
   const jwk = { ...(await crypto.subtle.exportKey('jwk', keys.publicKey)), kid: 'ambientnoiser-test-key', alg: 'RS256', use: 'sig' };
   const codes = new Map();
   const sessions = new Map();
+  /** A session's state as Stripe reports it: 'open' until it is paid, then 'complete'. */
+  const status = new Map();
+  /** Stripe's answers by Idempotency-Key. */
+  const answered = new Map();
   const unexpected = [];
   const calls = [];
   let seq = 0;
@@ -81,10 +88,25 @@ export async function createFakes() {
       return Response.json({ id: PRICE, object: 'price', active: true, currency: 'eur', unit_amount: AMOUNT, recurring: null, type: 'one_time' });
     }
     if (method === 'POST' && path === '/checkout/sessions') {
+      const key = headers.get('idempotency-key');
+      if (key && answered.has(key)) return Response.json(answered.get(key));
       seq += 1;
       const id = `cs_test_ambientnoiser${seq}`;
       sessions.set(id, new URLSearchParams(body));
-      return Response.json({ id, object: 'checkout.session', url: `https://checkout.stripe.com/c/pay/${id}` });
+      status.set(id, 'open');
+      const session = { id, object: 'checkout.session', url: `https://checkout.stripe.com/c/pay/${id}` };
+      if (key) answered.set(key, session);
+      return Response.json(session);
+    }
+    const asked = method === 'GET' && path.match(/^\/checkout\/sessions\/([A-Za-z0-9_]+)$/);
+    if (asked && sessions.has(asked[1])) {
+      const id = asked[1];
+      const state = status.get(id);
+      return Response.json({
+        id, object: 'checkout.session', status: state, mode: sessions.get(id).get('mode'),
+        url: state === 'open' ? `https://checkout.stripe.com/c/pay/${id}` : null,
+        payment_intent: state === 'complete' ? `pi_${id.replace(/[^0-9A-Za-z]/g, '')}` : null,
+      });
     }
     unexpected.push(`${method} stripe ${path}`);
     return Response.json({ error: { message: 'unknown endpoint' } }, { status: 404 });
@@ -127,11 +149,14 @@ export async function createFakes() {
       back.searchParams.set('state', params.get('state') ?? '');
       return back;
     },
-    /** The `checkout.session.completed` event Stripe sends once the session `checkoutUrl` names is paid. */
+    /** The session `checkoutUrl` names paid, and the `checkout.session.completed` event Stripe
+     *  sends for it. From here Stripe reports the session complete, whether or not the event has
+     *  been delivered. */
     paid(checkoutUrl) {
       const id = new URL(checkoutUrl).pathname.split('/').pop() ?? '';
       const asked = sessions.get(id);
       if (!asked) throw new Error(`no Checkout Session ${id}`);
+      status.set(id, 'complete');
       const plain = id.replace(/[^0-9A-Za-z]/g, '');
       return {
         id: `evt_${plain}`,

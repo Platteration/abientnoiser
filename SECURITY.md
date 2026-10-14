@@ -42,7 +42,8 @@ Pages or `server/start.mjs` behind nginx), that is in scope too: a way to sign i
 or keep a session past sign-out, a grant without Stripe's signed webhook, a request another site
 can make on a signed-in visitor's behalf, an address outside the site the sign-in can be sent
 to, and anything the API keeps or reveals beyond the account id, the email address while signed
-in, what was bought and Stripe's customer id. `server/kit/` is a copy of a kit shared with the
+in, what was bought, Stripe's customer id and, for 30 days, the Checkout Session it last gave the
+visitor for the product. `server/kit/` is a copy of a kit shared with the
 owner's other apps; a report about it is welcome here. The "thank you" line a supporter sees is
 drawn in the visitor's own browser and gates nothing, so showing it without paying is not a
 finding.

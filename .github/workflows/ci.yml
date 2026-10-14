@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -58,18 +58,20 @@ jobs:
 
   # Its own job, so that an advisory published against an unchanged tree turns audit red
   # on the next run (on the default branch, the weekly one at the latest) and leaves check
-  # meaning what it always meant. npm audit reads the lockfile: no install.
-  # --omit=dev audits what a production install would install, and today that is
-  # nothing: Playwright, the one dependency, is a development one. high is the shared
-  # threshold (CONVENTIONS.md, "CI").
+  # meaning what it always meant. The shared gate runs npm audit --omit=dev, which reads the
+  # lockfile (no install), and fails on every high or critical advisory that
+  # .github/audit/accepted.json does not accept; this repository keeps no such list, so it
+  # accepts none. --omit=dev audits what a production install would install, and today that
+  # is nothing: Playwright, TypeScript and @types/node are development dependencies
+  # (CONVENTIONS.md, "CI").
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
 
-      - run: npm audit --omit=dev --audit-level=high
+      - run: node .github/audit/npm-audit.mjs

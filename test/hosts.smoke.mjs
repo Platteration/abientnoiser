@@ -287,8 +287,11 @@ async function apache() {
   const adir = path.join(work, 'apache');
   fs.mkdirSync(adir, { recursive: true });
   const [plain, tls, proxied] = [await freePort(), await freePort(), await freePort()];
-  // Apache with the modules the .htaccess names, and AllowOverride All, which its
-  // ServerSignature needs; the site at the document root, as the README's Apache row builds it.
+  // Apache as README's Deploy says to set it up: the modules the .htaccess needs loaded (mod_rewrite
+  // and mod_headers among them: nothing in it is wrapped in <IfModule>, so without them every
+  // request is a 500), `AllowOverride FileInfo Indexes Options` for the folder (Indexes for its
+  // DirectoryIndex) and `ServerTokens Prod`; the site at the document root, as the README's Apache
+  // row builds it.
   fs.writeFileSync(path.join(adir, 'httpd.conf'), [
     `ServerRoot ${adir}`,
     `DefaultRuntimeDir ${adir}`,
@@ -300,6 +303,7 @@ async function apache() {
     ...['mpm_event', 'authz_core', 'mime', 'dir', 'rewrite', 'headers', 'ssl', 'socache_shmcb', 'proxy', 'proxy_http']
       .map((m) => `LoadModule ${m}_module ${path.join(MODULES, `mod_${m}.so`)}`),
     'TypesConfig /etc/mime.types',
+    'ServerTokens Prod',
     `SSLSessionCache shmcb:${path.join(adir, 'ssl_scache')}(512000)`,
     `DocumentRoot ${dir}`,
     '<Directory />',
@@ -307,7 +311,7 @@ async function apache() {
     '  Require all denied',
     '</Directory>',
     `<Directory ${dir}>`,
-    '  AllowOverride All',
+    '  AllowOverride FileInfo Indexes Options',
     '  Require all granted',
     '</Directory>',
     // a stock install refuses .ht* itself

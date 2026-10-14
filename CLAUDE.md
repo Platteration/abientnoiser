@@ -237,7 +237,15 @@ empty; a change is made there and copied, never here), with this app's catalogue
   `api/auth/google/start?return=<this page>`), or "Signed in as …", Sign out and Delete account
   (confirmed with `window.confirm`); and "Support this app" with Stripe's price and Buy, "Sign
   in to buy" or "Owned". Buy follows the Checkout address only when it is
-  `https://checkout.stripe.com/…`. Back from Google with `?signin=failed`, or from Stripe with
+  `https://checkout.stripe.com/…`, and every button of the section is disabled while one action
+  is out, so a double click sends one Buy and no Delete account goes out beside it. The kit gives
+  a second Buy the session it gave the first while that one is open, and once it is paid answers
+  409 `payment_pending` until the webhook is recorded: the page asks `api/me` again and, unless it
+  now reports the purchase, says "Payment received. It can take a minute to appear — reload to
+  check."; any other 409 is read
+  as owned, and a 502 says "The shop could not be reached. Try again." (the kit answers 502 to a
+  press that reaches Stripe while another press's session is being made, and pressed again that
+  one is given the session). Back from Google with `?signin=failed`, or from Stripe with
   `?purchase=`, the flag leaves the address at once; after `?purchase=success` the page asks
   `api/me` five times over fifteen seconds for the thank-you. Leaving for Google or Stripe asks
   first when a recording, a WAV export or an unsaved shared mix would be lost (`leaveFor` in
@@ -255,7 +263,11 @@ empty; a change is made there and copied, never here), with this app's catalogue
 - **Tests**: the kit's self-test (`server/kit/selftest.mjs`) runs in `npm test`;
   `test/api.test.mjs` drives the catalogue through both entry points with the fakes of
   `test/api-fakes.mjs` injected through the kit's `fetch` (never a variable that points the kit
-  at another host); `test/account.test.js` drives `js/account.js` against a fake fetch and
+  at another host), and the page's own client through a second Buy and a paid session whose
+  webhook has not landed; the fake Stripe answers a request under an `Idempotency-Key` it has
+  already answered with that first answer, and serves `GET /v1/checkout/sessions/<id>` (open, then
+  complete with its payment), as the kit's README says a fake must where a test presses Buy
+  twice; `test/account.test.js` drives `js/account.js` against a fake fetch and
   document; `test/site.smoke.mjs` runs the whole flow in Chromium under the site's policy with
   the kit mounted at `/abientnoiser/api/` (sign in, buy, the signed webhook, the thank-you,
   sign out, sign in again, delete) and a host whose `api/config` is a 404; and
@@ -309,7 +321,13 @@ proxy that sends `X-Forwarded-Proto`, and reads every file of the site and a che
 planted beside it back off the real servers. A file that only website.test.js reads can still
 fail to load (`http2 on;` is nginx 1.25.1 and later; Ubuntu 24.04 ships 1.24) or send something
 other than it says (Apache's `env=HTTPS` is mod_ssl's alone, so behind a proxy HSTS never went
-out). Where nginx or Apache is missing it says so and passes, unless `CI` is set.
+out). Its Apache is set up as README's Deploy says: `AllowOverride FileInfo Indexes Options`
+(the `.htaccess` sets `DirectoryIndex`; without `Indexes` every request is a 500), mod_rewrite
+and mod_headers loaded, `ServerTokens Prod`. Nothing in `.htaccess` is wrapped in `<IfModule>`
+and HSTS there takes no condition (the conventions test holds both): wrapped, on an Apache 2.4.58
+with neither module loaded, the folder served a planted `README.md` 200 with no policy and logged
+nothing (measured); unwrapped, every request is a 500 and the log names `RewriteEngine`. Where
+nginx or Apache is missing it says so and passes, unless `CI` is set.
 
 `test:textures` is the only check on how things actually sound. Nobody has heard this
 app; spectral balance is the closest available proxy. It puts the piece into a bright
@@ -321,10 +339,15 @@ It asserts against measured behaviour (levels, source counts, render times), so 
 a bound only when you have measured that the old one was wrong.
 
 Playwright, TypeScript and `@types/node` are the only dependencies, all of them for
-development: Playwright for the browser suites, TypeScript for `npm run typecheck`, which the
-conventions test requires once the kit's `.d.ts` files are in the tree (the kit passes this
-repository's strict `tsconfig.json` unchanged). The site ships none of them; the lockfile pins
-the versions, and CI installs with `npm ci`. CI's check job and the Pages build run on
+development: Playwright for the browser suites, TypeScript for `npm run typecheck`, which checks
+the kit's JavaScript and this app's API entry points under `tsconfig.json` (strict, `checkJs`,
+`noUncheckedIndexedAccess`; the kit passes it unchanged) and which the conventions test requires
+of a repository with a tsconfig. The kit's `.d.ts` files are carried as the canonical copy has
+them; under `skipLibCheck` tsc checks nothing in them. The site ships none of the three; the
+lockfile pins the versions, and CI installs with `npm ci`. CI's `audit` job runs the shared gate,
+`node .github/audit/npm-audit.mjs` (`npm audit --omit=dev` over the lockfile, failing on every
+high or critical advisory `.github/audit/accepted.json` does not accept; this repository keeps
+no list, and its production tree is empty). Every job of `ci.yml` and `pages.yml` runs on
 `ubuntu-24.04`, not `ubuntu-latest`, which becomes Ubuntu 26.04 from 2026-10-19: Playwright 1.56.1
 has no Chromium build for 26.04 ("Playwright does not support chromium on ubuntu26.04-x64").
 `test/ci.test.js` asks the locked Playwright's own CLI (`install --dry-run`, told the platform)

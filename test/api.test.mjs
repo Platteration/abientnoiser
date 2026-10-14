@@ -210,6 +210,12 @@ describe('a host of its own: server/start.mjs through the Node adapter', () => {
     assert.equal(asked.get('cancel_url'), `${APP_URL}?purchase=cancelled`);
     assert.equal(asked.get('metadata[app]'), 'ambientnoiser');
     assert.equal(asked.get('metadata[product]'), 'supporter');
+    // What README's "What leaves the device" says Stripe is told: the account id, as the session's
+    // client_reference_id and in the payment's metadata, and not the email address.
+    assert.equal(asked.get('client_reference_id'), 'google:1001');
+    assert.equal(asked.get('metadata[user]'), 'google:1001');
+    assert.equal(asked.get('payment_intent_data[metadata][user]'), 'google:1001');
+    assert.deepEqual([...asked.values()].filter((v) => v.includes('ada@example.com')), [], 'no email address goes to Stripe');
     assert.deepEqual((await me(browser)).entitlements, [], 'a session created is not a purchase: nothing is granted before Stripe says it was paid');
 
     const forged = signedDelivery(fakes.paid(checkout), { secret: 'whsec_notTheSiteSecret000000' });
@@ -235,6 +241,38 @@ describe('a host of its own: server/start.mjs through the Node adapter', () => {
     assert.deepEqual(await me(browser), { user: null, entitlements: [] });
     await signIn(browser, { sub: '1001', email: 'ada@example.com' });
     assert.deepEqual((await me(browser)).entitlements, [], 'deleting the account deleted the purchase records with it');
+    assert.deepEqual(fakes.unexpected, []);
+    assert.deepEqual(logs, []);
+  });
+
+  it('a second Buy before Stripe\'s webhook is given the open Checkout again, and once it is paid a 409 payment_pending, which the page reads as a payment on its way', async () => {
+    // The page's own client (js/account.js) against the real kit: what it does with each answer.
+    const browser = jar();
+    await signIn(browser, { sub: '1002', email: 'lin@example.com' });
+    const pageFetch = async (url, init = {}) => {
+      const headers = { ...(init.headers ?? {}), origin: ORIGIN, ...(browser.header() ? { cookie: browser.header() } : {}) };
+      const response = await realFetch(url, { method: init.method, body: init.body, redirect: 'manual', headers });
+      browser.take(response);
+      return response;
+    };
+    const client = account.client({ fetch: pageFetch, base: api.url });
+    const first = await client.checkout('supporter');
+    assert.match(first.url ?? '', /^https:\/\/checkout\.stripe\.com\/c\/pay\/cs_test_/);
+    const made = fakes.sessions.size;
+    assert.deepEqual(await client.checkout('supporter'), first, 'another tab\'s Buy is given the same open session');
+    assert.equal(fakes.sessions.size, made, 'and Stripe was asked for no second one');
+
+    const event = fakes.paid(first.url); // paid in Checkout; Stripe's webhook not delivered yet
+    assert.equal(await client.checkout('supporter'), 'pending', 'paid, not yet recorded: 409 payment_pending, and no second Checkout');
+    assert.equal(fakes.sessions.size, made);
+    assert.deepEqual((await client.me()).entitlements, [], 'nothing is granted before the webhook');
+
+    const delivery = signedDelivery(event);
+    const hook = await realFetch(`${api.url}api/webhooks/stripe`, { method: 'POST', headers: { 'stripe-signature': delivery.signature, 'content-type': 'application/json' }, body: delivery.body });
+    assert.equal(hook.status, 200);
+    assert.deepEqual((await client.me()).entitlements, ['supporter']);
+    assert.equal(await client.checkout('supporter'), 'owned', 'recorded: 409 already_owned');
+    assert.equal(fakes.sessions.size, made);
     assert.deepEqual(fakes.unexpected, []);
     assert.deepEqual(logs, []);
   });
