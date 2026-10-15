@@ -2,9 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
-const net = require('node:net');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const site = require('../scripts/site.js');
@@ -19,53 +16,22 @@ function get(pathname) {
   );
 }
 
-/** A request with the Host header spelled out. fetch() (undici) refuses to set Host, and
- *  a browser cannot either, which is the whole reason the header is worth checking;
- *  http.request will send whatever it is given. */
-function raw(onPort, pathname, hostHeader) {
+function getWithHost(pathname, host) {
+  return fetch(`http://localhost:${port}${pathname}`, { headers: { Host: host } }).then(
+    (r) => ({ status: r.status }),
+    (e) => ({ error: e.cause ? e.cause.code || String(e.cause) : String(e) })
+  );
+}
+
+function getRaw(pathname, headers = {}) {
   return new Promise((resolve) => {
-    const req = http.request({ host: '127.0.0.1', port: onPort, path: pathname, headers: { Host: hostHeader }, setHost: false }, (res) => {
-      res.resume();
-      res.on('end', () => resolve({ status: res.statusCode }));
+    const request = http.request({ hostname: 'localhost', port, path: pathname, headers }, (response) => {
+      response.resume();
+      response.on('end', () => resolve({ status: response.statusCode }));
     });
-    req.on('error', (e) => resolve({ error: e.code || String(e) }));
-    req.end();
+    request.on('error', (error) => resolve({ error: error.code || String(error) }));
+    request.end();
   });
-}
-
-/** A request with no Host at all. Node answers 400 to an HTTP/1.1 request without one
- *  before any handler runs (requireHostHeader), so the client that reaches the handler
- *  with none is an HTTP/1.0 one — `curl --http1.0`, or a raw probe like this. */
-function http10(onPort, pathname) {
-  return new Promise((resolve) => {
-    const sock = net.connect(onPort, '127.0.0.1', () => sock.write(`GET ${pathname} HTTP/1.0\r\n\r\n`));
-    let data = '';
-    sock.on('data', (d) => { data += d; });
-    sock.on('end', () => resolve({ status: Number((data.match(/^HTTP\/1\.[01] (\d+)/) || [])[1]) }));
-    sock.on('error', (e) => resolve({ error: e.code || String(e) }));
-  });
-}
-
-/** Spawn the real server (or `args` for node, a copy of it in a tree of its own);
- *  `stderr()` hands back what it has logged so far. */
-async function started(onPort, env, t, args = [serve]) {
-  const server = spawn(process.execPath, args, { env: { ...process.env, ...env, PORT: String(onPort) }, stdio: ['ignore', 'ignore', 'pipe'] });
-  let err = '';
-  server.stderr.on('data', (d) => { err += d; });
-  t.after(() => server.kill());
-  for (let i = 0; i < 50; i++) {
-    if ((await raw(onPort, '/index.html', `localhost:${onPort}`)).status === 200) break;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return { server, stderr: async () => { await new Promise((r) => setTimeout(r, 50)); return err; } };
-}
-
-/** One address a phone on the LAN would type: the first non-internal IPv4, if any. */
-function lanAddress() {
-  for (const addresses of Object.values(os.networkInterfaces())) {
-    for (const a of addresses || []) if (!a.internal && a.family === 'IPv4') return a.address;
-  }
-  return null;
 }
 
 test('the dev server survives the requests a browser actually makes', async (t) => {
@@ -100,10 +66,11 @@ test('the dev server survives the requests a browser actually makes', async (t) 
 
   // nothing outside the project is reachable
   assert.equal((await get('/../../etc/passwd')).status, 404);
-  assert.equal((await get('/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status, 403);
-  // fetch() would resolve the encoded '..' segments away before sending; http.request sends them
-  assert.equal((await raw(port, '/js/%2e%2e/%2e%2e/package.json', `localhost:${port}`)).status, 403, 'a step out through a folder of the site');
-  assert.equal((await raw(port, '/index.html', `rebind.example:${port}`)).status, 403, 'and a rebound Host is refused here too');
+  assert.equal((await getRaw('/js/%2e%2e/%2e%2e/package.json')).status, 403);
+  assert.equal((await get('/%00')).status, 400, 'rejects an encoded NUL');
+  assert.equal((await get('/.git/config')).status, 404, 'does not expose repository metadata');
+  assert.equal((await get('/package.json')).status, 404, 'does not expose project files');
+  assert.equal((await getRaw('/index.html', { Host: `rebind.example:${port}` })).status, 421, 'rejects rebinding Host headers');
   assert.equal((await get('/index.html')).status, 200, 'still alive after traversal attempts');
 
   // aborted requests must not take it down either

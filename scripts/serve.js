@@ -11,49 +11,10 @@ const { siteFiles } = require('./site');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT) || 5173;
-// Loopback by default: HOST=0.0.0.0 opts in to phone testing, and what is served is the
-// website alone (siteList below), not the checkout it sits in.
-const host = process.env.HOST || '127.0.0.1';
-// The names a request may carry in Host: loopback names, ALLOWED_HOST (a comma-separated
-// list), and — bound off loopback — this machine's own names, so a phone can reach it by
-// address, by hostname or by an mDNS name. The rule and its reasons are in hosts.js.
-const hostAllowed = hostGate({ host, allowedHost: process.env.ALLOWED_HOST });
-// The root as the filesystem names it, so that a resolved path is compared with its like.
-const realRoot = fs.realpathSync.native(root);
-
-// The website's files, as scripts/site.js lists them for the deploy: the service worker's
-// SHELL and the few files beside it. Read at the start, so a sw.js with no list stops the
-// server there, and again on every request, so a module just added to the shell is served
-// without a restart; while sw.js is mid-edit and gives no list, the last one it gave stands.
-let listed;
-try {
-  listed = new Set(siteFiles());
-} catch (e) {
-  console.error(`Ambient Noiser: ${e.message}, so there is no site to serve`);
-  process.exit(1);
-}
-let unlisted = false;
-function siteList() {
-  try {
-    listed = new Set(siteFiles());
-    unlisted = false;
-  } catch (e) {
-    if (!unlisted) console.error(`Ambient Noiser: ${e.message}; serving the files it listed last`);
-    unlisted = true;
-  }
-  return listed;
-}
-
-/** Whether a path the filesystem resolved may be served: it is one of the website's files.
- *  The address as written is not the file that opens: on Windows '\' separates too and
- *  GIT~1, the 8.3 short name of .git, opens .git, so `/%5C.git%5Cconfig` and `/GIT~1/config`
- *  once served .git/config past rules that split the address on '/'; anywhere, a link goes
- *  where it points. The resolved path has none of those spellings left in it, and one outside
- *  the checkout (a '..' first, or another drive's absolute path) names no file of the list. */
-function servable(real) {
-  return siteList().has(path.relative(realRoot, real).split(path.sep).join('/'));
-}
-
+const host = process.env.SERVE_HOST || '127.0.0.1';
+const extraHosts = new Set((process.env.SERVE_ALLOWED_HOSTS || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean));
+const publicFiles = new Set(['index.html', 'icon.svg', 'manifest.webmanifest', 'sw.js']);
+const publicDirectories = new Set(['css', 'js']);
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -83,15 +44,29 @@ const server = http.createServer((req, res) => {
     res.writeHead(400);
     return res.end('Bad request');
   }
-  // fs.stat throws synchronously on a NUL byte, which would take the process with it.
-  // Every other control character (DEL included) goes the same way, so a raw CR or LF
-  // cannot reach a header either.
-  if (/[\u0000-\u001f\u007f]/.test(url)) {
+  if (url.includes('\0') || /[\u0001-\u001f\u007f]/.test(url)) {
     res.writeHead(400);
     return res.end('Bad request');
   }
-  let file = path.join(root, url === '/' ? 'index.html' : url);
-  if (path.relative(root, file).startsWith('..')) {
+  const requestHost = String(req.headers.host || '').toLowerCase();
+  const [hostName, hostPort] = requestHost.startsWith('[')
+    ? requestHost.split(']')
+    : requestHost.split(':');
+  const normalizedHost = hostName.replace(/^\[/, '').replace(/\]$/, '');
+  const expectedPort = String(port);
+  const loopback = new Set(['localhost', '127.0.0.1', '::1']);
+  if ((!loopback.has(normalizedHost) && !extraHosts.has(normalizedHost)) || (hostPort && hostPort !== expectedPort)) {
+    res.writeHead(421);
+    return res.end('Misdirected request');
+  }
+  const relative = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
+  const first = relative.split('/')[0];
+  if (!publicFiles.has(relative) && !publicDirectories.has(first)) {
+    res.writeHead(404);
+    return res.end('Not found');
+  }
+  let file = path.join(root, relative);
+  if (path.relative(root, file).startsWith('..') || path.isAbsolute(relative)) {
     res.writeHead(403);
     return res.end();
   }
@@ -129,4 +104,4 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(port, host, () => console.log(`Ambient Noiser: http://localhost:${port}`));
+server.listen(port, host, () => console.log(`Ambient Noiser: http://${host}:${port}`));
